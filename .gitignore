@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+
+# Database
+.data/
+*.sqlite
+*.sqlite-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test outputs
+runs/
+reports/
+
+# Temporary files
+tmp/
+temp/
+nul
+null
+.backups/
+
+# Reference docs (local only)
+docs/reference/
+
+# Supabase
+supabase/.branches
+supabase/.temp
+.supabase
+
+# Additional environment files
+.env.local
+.env.*.local
+
+# SQLite test database
+.dataharness.sqlite

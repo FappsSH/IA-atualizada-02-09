@@ -1,0 +1,61 @@
+{
+  "name": "@agenthub-fapps/core",
+  "version": "0.2.0",
+  "description": "AgenteHub — Fapps. Dashboard Next.js + Edge Functions para vendas via IA no WhatsApp.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run --config tests/vitest.config.ts",
+    "test:watch": "vitest --config tests/vitest.config.ts",
+    "test:supabase": "vitest run tests/supabase --config tests/vitest.config.ts",
+    "test:supabase:unit": "vitest run tests/supabase/unit --config tests/vitest.config.ts",
+    "test:supabase:integration": "vitest run tests/supabase/integration --config tests/vitest.config.ts",
+    "test:supabase:e2e": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run --config tests/vitest.e2e.config.ts",
+    "db:seed:course-catalog": "node --env-file=.env.local --experimental-strip-types scripts/sync-course-catalog.ts",
+    "db:link": "tsx scripts/supabase-cli.ts link",
+    "db:push": "tsx scripts/supabase-cli.ts db push",
+    "db:push:dry": "tsx scripts/supabase-cli.ts db push --dry-run",
+    "db:status": "tsx scripts/supabase-cli.ts db status"
+  },
+  "keywords": [
+    "agenthub",
+    "fapps",
+    "whatsapp",
+    "ai",
+    "vendas"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.16",
+    "@radix-ui/react-progress": "^1.1.6",
+    "@radix-ui/react-select": "^2.3.0",
+    "@radix-ui/react-slider": "^1.4.0",
+    "@radix-ui/react-slot": "^1.2.5",
+    "@radix-ui/react-switch": "^1.3.0",
+    "@radix-ui/react-tabs": "^1.1.14",
+    "@radix-ui/react-toast": "^1.2.16",
+    "@types/node": "^25.9.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.5.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.17.0",
+    "next": "^14.2.35",
+    "postcss": "^8.5.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^3.4.19"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.108.0",
+    "supabase": "^2.67.3",
+    "tsx": "^4.21.0",
+    "typescript": "5.6.3",
+    "vitest": "^4.0.16"
+  }
+}

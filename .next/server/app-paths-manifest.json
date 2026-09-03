@@ -1,0 +1,9 @@
+{
+  "/page": "app/page.js",
+  "/conhecimento/page": "app/conhecimento/page.js",
+  "/api/settings/route": "app/api/settings/route.js",
+  "/api/supabase/route": "app/api/supabase/route.js",
+  "/subagentes/page": "app/subagentes/page.js",
+  "/configuracoes/page": "app/configuracoes/page.js",
+  "/regras/page": "app/regras/page.js"
+}
