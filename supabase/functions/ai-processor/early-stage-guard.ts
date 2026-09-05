@@ -75,6 +75,12 @@ export function detectAmbiguousCourseLineViolations(
   if (!normalized || normalizedAllowedLines.size === 0) return [];
 
   const violations: string[] = [];
+  for (const line of normalizedAllowedLines) {
+    if (!normalized.includes(line)) {
+      violations.push(`missing_course_line:${line}`);
+    }
+  }
+
   const knownLines = ['bacharelado', 'licenciatura'];
   for (const line of knownLines) {
     if (normalized.includes(line) && !normalizedAllowedLines.has(line)) {
@@ -86,6 +92,8 @@ export function detectAmbiguousCourseLineViolations(
     'outra linha',
     'outras linhas',
     'outras opcoes',
+    'alternativas',
+    'alternativas nessa area',
     'outras opcoes parecidas',
     'ou similares',
   ];

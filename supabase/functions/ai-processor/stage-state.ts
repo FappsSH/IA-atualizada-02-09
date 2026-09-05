@@ -254,6 +254,13 @@ function looksLikeFullName(message: string) {
   return words.length >= 2 && words.length <= 5 && words.every((word) => /^[a-z]+$/i.test(word) && word.length >= 2);
 }
 
+function looksLikeReferralName(message: string) {
+  const normalized = normalize(message);
+  if (!normalized || looksLikePhoneReply(message)) return false;
+  const words = normalized.split(' ').filter(Boolean);
+  return words.length >= 1 && words.length <= 5 && words.every((word) => /^[a-z]+$/i.test(word) && word.length >= 2);
+}
+
 function extractFullNameCandidate(message: string) {
   const raw = String(message || '').trim();
   const cleaned = raw
@@ -550,6 +557,7 @@ export function classifyInboundAgainstStageState(params: {
     'meu sonho',
     'objetivo',
     'para concurso',
+    'prestar concurso',
     'quero fazer ele para concurso',
     'quero crescer',
     'quero migrar',
@@ -757,7 +765,7 @@ export function classifyInboundAgainstStageState(params: {
   }
 
   const fullNameCandidate = extractFullNameCandidate(latestUserMessage);
-  if (pendingCriterion === 'full_name' && (assistantAskedProposalName(params.history) || lastAgentQuestionType === 'full_name') && looksLikeFullName(fullNameCandidate)) {
+  if (pendingCriterion === 'full_name' && looksLikeFullName(fullNameCandidate)) {
     return {
       ...result,
       classification: 'contextual_response',
@@ -798,7 +806,7 @@ export function classifyInboundAgainstStageState(params: {
     };
   }
 
-  if (pendingCriterion === 'referral_name' && looksLikeFullName(latestUserMessage)) {
+  if (pendingCriterion === 'referral_name' && looksLikeReferralName(latestUserMessage)) {
     return {
       ...result,
       classification: 'contextual_response',
@@ -818,6 +826,52 @@ export function classifyInboundAgainstStageState(params: {
       matched: true,
       statePatch: {
         pending_indication_phone: latestUserMessage,
+      },
+    };
+  }
+
+  if (stage === 'E3' && includesAny(normalized, [
+    'gostei',
+    'nao tenho duvidas',
+    'não tenho dúvidas',
+    'sem duvidas',
+    'sem dúvidas',
+    'nenhuma duvida',
+    'nenhuma dúvida',
+    'quero ver os valores',
+    'quero saber os valores',
+    'valores',
+    'valor',
+    'preco',
+    'preço',
+  ])) {
+    return {
+      ...result,
+      classification: 'contextual_response',
+      classificationReason: 'resolved_pending_e3_interest_signal',
+      matched: true,
+      statePatch: {
+        e3_interest_signal_captured: true,
+      },
+    };
+  }
+
+  if (stage === 'E4' && includesAny(normalized, [
+    'quero fazer a matricula',
+    'quero fazer matrícula',
+    'quero matricular',
+    'pode fazer a matricula',
+    'pode fazer matrícula',
+    'vamos fazer a matricula',
+    'vamos fazer matrícula',
+  ])) {
+    return {
+      ...result,
+      classification: 'contextual_response',
+      classificationReason: 'resolved_pending_enrollment_intent',
+      matched: true,
+      statePatch: {
+        enrollment_intent_confirmed: true,
       },
     };
   }

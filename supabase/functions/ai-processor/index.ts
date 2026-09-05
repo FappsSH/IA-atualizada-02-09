@@ -248,6 +248,43 @@ function assistantAskedE1MotivationQuestion(history: Array<{ role?: string; cont
     ]);
 }
 
+function extractLikelyE1CourseQuery(message: string) {
+    const normalized = normalizeText(message);
+    if (!normalized) return '';
+    if (textIncludesAny(normalized, [
+        'quais cursos',
+        'que cursos',
+        'cursos voces tem',
+        'cursos voce tem',
+        'opcoes de curso',
+        'opções de curso',
+    ])) return '';
+
+    const cleaned = String(message || '')
+        .replace(/[!?.,;:]+$/g, '')
+        .replace(/^\s*(oi|ola|olá|bom dia|boa tarde|boa noite)[,\s]+/i, '')
+        .replace(/^\s*(quero saber mais sobre|quero saber sobre|queria saber sobre|tenho interesse em|quero fazer|quero cursar|quero)\s+/i, '')
+        .trim();
+    const cleanedNormalized = normalizeText(cleaned);
+    const words = cleanedNormalized.split(' ').filter(Boolean);
+    const blocked = new Set([
+        'sim',
+        'nao',
+        'não',
+        'talvez',
+        'valor',
+        'valores',
+        'bolsa',
+        'desconto',
+        'cidade',
+        'curso',
+        'cursos',
+    ]);
+    if (!cleaned || words.length < 1 || words.length > 6) return '';
+    if (blocked.has(cleanedNormalized)) return '';
+    return cleaned;
+}
+
 function lastLeadReplyCanCloseE1(recentUserMessages: string[]) {
     const lastReply = normalizeText(recentUserMessages.slice(-1)[0] || '');
     if (!lastReply) return false;
@@ -461,6 +498,11 @@ async function applyPersonalityOutputGuard(params: {
                 : [],
             availableCourseLines: Array.isArray(liveSalesContext.available_course_lines) ? liveSalesContext.available_course_lines : [],
             pendingCriterion,
+            e3AuthorizedClaimKeys: Array.isArray(params.stageOutput.speakableFacts?.e3_authorized_claim_keys)
+                ? params.stageOutput.speakableFacts.e3_authorized_claim_keys.map((key: unknown) => String(key || '')).filter(Boolean)
+                : Array.isArray(params.stageOutput.speakableFacts?.e3_authorized_facts)
+                    ? params.stageOutput.speakableFacts.e3_authorized_facts.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean)
+                    : [],
         });
 
         params.stageOutput.personalityGuardTriggered = guard.personality_guard_triggered === true;
@@ -550,8 +592,20 @@ async function applyPersonalityOutputGuard(params: {
             },
         });
 
-        params.stageOutput.originalOutput = params.stageOutput.originalOutput || params.stageOutput.text || null;
-        const regeneratedText = regeneratedOutput.text || null;
+        const originalTextBeforeRegeneration = params.stageOutput.text || '';
+        params.stageOutput.originalOutput = params.stageOutput.originalOutput || originalTextBeforeRegeneration || null;
+        let regeneratedText = regeneratedOutput.text || null;
+        if (
+            params.currentSubagent === 'E2'
+            && effectiveProcessAction === 'ask_vaccine_agreement'
+            && textIncludesAny(normalizeText(params.activeLastUserMessage || ''), ['marido', 'esposa', 'mae', 'mãe', 'pai', 'familia', 'família', 'converso com'])
+            && textIncludesAny(normalizeText(originalTextBeforeRegeneration), ['marido', 'esposa', 'mae', 'mãe', 'pai', 'familia', 'família'])
+            && !textIncludesAny(normalizeText(regeneratedText || ''), ['marido', 'esposa', 'mae', 'mãe', 'pai', 'familia', 'família'])
+            && normalizeText(originalTextBeforeRegeneration).includes('bolsa')
+            && normalizeText(originalTextBeforeRegeneration).includes('combinado')
+        ) {
+            regeneratedText = originalTextBeforeRegeneration;
+        }
         params.stageOutput.text = regeneratedText || params.stageOutput.text;
         params.stageOutput.outputBeforeGovernance = regeneratedOutput.outputBeforeGovernance || regeneratedText || params.stageOutput.text || null;
         params.stageOutput.responseOrigin = regeneratedOutput.responseOrigin || 'llm_regeneration';
@@ -712,6 +766,20 @@ export function buildE1AskCityFallback(course: string) {
     return `${courseLabel} faz bastante sentido para muita gente que busca esse caminho.\n\nMe diz só de qual cidade você fala?`;
 }
 
+function buildE1CourseLineFallback(course: string, availableLines: unknown[]) {
+    const courseLabel = getCourseDisplayName(String(course || '').trim()) || String(course || 'esse curso').trim();
+    const lines = (availableLines || [])
+        .map((line) => String(line || '').trim())
+        .filter(Boolean);
+    const renderedLines = lines.map((line) => `- ${line}`).join('\n');
+    return [
+        `${courseLabel} está disponível por aqui em mais de uma linha.`,
+        `*${courseLabel}*`,
+        renderedLines,
+        'Qual linha você pretende seguir?',
+    ].filter(Boolean).join('\n\n');
+}
+
 export function buildE1AskMotivationFallback(course: string) {
     const courseLabel = String(course || 'esse curso').trim();
     return `Faz sentido você olhar para ${courseLabel}.\n\nAgora me conta: você já trabalha na área ou isso representa um sonho ou objetivo pessoal para você?`;
@@ -723,6 +791,25 @@ function buildE2AvailabilityFallback() {
 
 function buildE2DecisionFallback() {
     return 'Perfeito.\n\nNuma decisão como essa, você costuma decidir sozinho ou conversa com alguém antes?';
+}
+
+function buildE2TravelMoveDecisionFallback(modality: unknown) {
+    const normalizedModality = normalizeText(String(modality || ''));
+    if (normalizedModality === 'ead') {
+        return 'Entendi.\n\nComo seu curso é EAD, isso ajuda bastante, porque você consegue organizar os estudos nos melhores dias e horários para sua rotina, respeitando as datas da plataforma.\n\nE nessa decisão, você costuma decidir sozinho ou conversa com alguém antes?';
+    }
+
+    return 'Entendi.\n\nComo seu curso é semipresencial, o ponto principal é você conseguir acompanhar a parte online pela plataforma e se organizar para os momentos presenciais quando houver.\n\nE nessa decisão, você costuma decidir sozinho ou conversa com alguém antes?';
+}
+
+function e2TravelMoveOutputMatchesModality(text: string | undefined, modality: unknown) {
+    const normalized = normalizeText(text || '');
+    const normalizedModality = normalizeText(String(modality || ''));
+    if (!normalized) return false;
+    if (normalizedModality === 'ead') {
+        return textIncludesAny(normalized, ['ead', 'dia', 'horario', 'horário', 'datas']);
+    }
+    return textIncludesAny(normalized, ['semipresencial', 'plataforma', 'aulas ao vivo']);
 }
 
 function detectLineFormationReply(history: Array<{ role?: string; content?: string }>, latestUserMessage: string) {
@@ -838,6 +925,40 @@ function buildE1CompletionFallback(params: {
 
 function buildE2CompletionFallback() {
     return 'Perfeito, combinado!';
+}
+
+function extractModelCompletionAcknowledgement(text: string | undefined) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const firstBlock = raw.split(/\n\s*\n/).map((part) => part.trim()).find(Boolean) || '';
+    const normalized = normalizeText(firstBlock);
+    if (!firstBlock || firstBlock.includes('?')) return '';
+    if (textIncludesAny(normalized, [
+        'qual ',
+        'quais ',
+        'cursos',
+        'opcoes',
+        'opcoes',
+        'cidade',
+        'combinado',
+        'inscricao',
+        'lista',
+    ])) return '';
+    if (/^\s*[-*•·]/.test(firstBlock)) return '';
+    return firstBlock;
+}
+
+function splitValidatedE3Blocks(text: string | undefined) {
+    const blocks = String(text || '').split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+    if (blocks.length < 3) return [String(text || '').trim()].filter(Boolean);
+    const courseIndex = blocks.findIndex((block) => normalizeText(block).startsWith('sobre '));
+    const closingIndex = blocks.findIndex((block) => normalizeText(block).includes('tem algum em especifico que ficou com duvida'));
+    if (courseIndex <= 0 || closingIndex <= courseIndex) return [String(text || '').trim()].filter(Boolean);
+    return [
+        blocks.slice(0, courseIndex).join('\n\n'),
+        blocks.slice(courseIndex, closingIndex).join('\n\n'),
+        blocks.slice(closingIndex).join('\n\n'),
+    ].map((part) => part.trim()).filter(Boolean);
 }
 
 function buildAreaCourseSelectionFallback(params: {
@@ -1155,6 +1276,12 @@ function userExpressedCommercialInterest(message: string) {
         'quero sim',
         'tenho interesse',
         'curti',
+        'nao tenho duvidas',
+        'não tenho dúvidas',
+        'sem duvidas',
+        'sem dúvidas',
+        'nenhuma duvida',
+        'nenhuma dúvida',
     ]);
 }
 
@@ -1214,7 +1341,7 @@ function textMentionsPricesOrDiscounts(text: string | undefined) {
 }
 
 function buildE3AdvanceToE4Fallback() {
-    return 'Perfeito.\n\nFaz sentido te mostrar as condicoes da bolsa de estudos com mais calma.\n\nMe diz so o que mais pesou para voce nessa escolha.';
+    return 'Perfeito.\n\nPara eu preparar sua proposta com as informacoes e condicoes da bolsa de estudos, me passa seu nome completo, por gentileza?';
 }
 
 function looksLikePhoneReply(message: string) {
@@ -1573,6 +1700,9 @@ function detectBoletoDateChoice(message: string) {
     if (textIncludesAny(normalized, ['hoje', 'ainda hoje'])) {
         return { kind: 'today', label: 'hoje' };
     }
+    if (textIncludesAny(normalized, ['segunda'])) {
+        return { kind: 'next_monday', label: 'proxima segunda-feira' };
+    }
     if (textIncludesAny(normalized, ['proxima segunda', 'próxima segunda', 'segunda-feira'])) {
         return { kind: 'next_monday', label: 'proxima segunda-feira' };
     }
@@ -1794,30 +1924,16 @@ serve(async (req) => {
 
     if (!payload) {
         let lastScanPayload: any = null;
-        for (let attempt = 1; attempt <= MAX_QUEUE_SCAN; attempt += 1) {
-            const { data: msgs } = await readMessage(supabase, Q_AI, 30);
-            if (!msgs?.length) {
-                if (lastScanPayload?.tenant_id && lastScanPayload?.lead_id) {
-                    await logLeadRuntimeEvent({
-                        supabase,
-                        tenantId: lastScanPayload.tenant_id,
-                        leadId: lastScanPayload.lead_id,
-                        eventType: 'test_queue_scan_finished',
-                        payload: {
-                            queue_scan_attempts: attempt - 1,
-                            processable_job_found: false,
-                            finished_reason: 'queue_empty',
-                            finished_at: new Date().toISOString(),
-                        },
-                    }).catch(() => {});
-                }
-                console.log('[ai-processor] fila vazia');
-                return new Response(JSON.stringify({ status: 'empty', queue_scan_attempts: attempt - 1 }), {
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
+        const { data: msgs } = await readMessage(supabase, Q_AI, 30, MAX_QUEUE_SCAN);
+        if (!msgs?.length) {
+            console.log('[ai-processor] fila vazia');
+            return new Response(JSON.stringify({ status: 'empty', queue_scan_attempts: 0 }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
 
-            const candidateMsg = msgs[0];
+        for (let attempt = 1; attempt <= msgs.length; attempt += 1) {
+            const candidateMsg = msgs[attempt - 1];
             const candidatePayload = candidateMsg.message || {};
             lastScanPayload = candidatePayload;
             const jobState = await classifyQueueJob({ supabase, payload: candidatePayload });
@@ -1872,7 +1988,7 @@ serve(async (req) => {
                         job_acknowledged: jobState.acknowledge === true,
                         job_deleted: jobState.acknowledge === true,
                         job_requeued: jobState.acknowledge !== true,
-                        next_job_attempted: attempt < MAX_QUEUE_SCAN,
+                        next_job_attempted: attempt < msgs.length,
                         skipped_at: new Date().toISOString(),
                     },
                 }).catch(() => {});
@@ -1909,7 +2025,7 @@ serve(async (req) => {
                             job_acknowledged: false,
                             job_deleted: false,
                             job_requeued: true,
-                            next_job_attempted: attempt < MAX_QUEUE_SCAN,
+                            next_job_attempted: attempt < msgs.length,
                             skipped_at: new Date().toISOString(),
                         },
                     }).catch(() => {});
@@ -1940,7 +2056,21 @@ serve(async (req) => {
         }
 
         if (!payload) {
-            return new Response(JSON.stringify({ status: 'empty', skipped: 'no_processable_job', queue_scan_attempts: MAX_QUEUE_SCAN }), {
+            if (lastScanPayload?.tenant_id && lastScanPayload?.lead_id) {
+                await logLeadRuntimeEvent({
+                    supabase,
+                    tenantId: lastScanPayload.tenant_id,
+                    leadId: lastScanPayload.lead_id,
+                    eventType: 'test_queue_scan_finished',
+                    payload: {
+                        queue_scan_attempts: msgs.length,
+                        processable_job_found: false,
+                        finished_reason: 'no_processable_job',
+                        finished_at: new Date().toISOString(),
+                    },
+                }).catch(() => {});
+            }
+            return new Response(JSON.stringify({ status: 'empty', skipped: 'no_processable_job', queue_scan_attempts: msgs.length }), {
                 headers: { 'Content-Type': 'application/json' },
             });
         }
@@ -2186,22 +2316,34 @@ serve(async (req) => {
             history: payload.history ?? [],
         });
         const e1SpecificCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []);
-
-        if (
+        const fallbackE1CourseQuery = payload.etapa_atual === 'E1' && pendingCriterion === 'course'
+            ? extractLikelyE1CourseQuery(lastUserMessage)
+            : '';
+        const shouldRunE1CoursePreflight =
             payload.etapa_atual === 'E1'
             && pendingCriterion === 'course'
-            && e1SpecificCourseIntent.matched === true
-            && ['specific', 'specific_or_related'].includes(String(e1SpecificCourseIntent.mode || ''))
-        ) {
+            && (
+                (
+                    e1SpecificCourseIntent.matched === true
+                    && ['specific', 'specific_or_related'].includes(String(e1SpecificCourseIntent.mode || ''))
+                )
+                || Boolean(fallbackE1CourseQuery)
+            );
+
+        if (shouldRunE1CoursePreflight) {
+            const preflightQuery = String(e1SpecificCourseIntent.query || fallbackE1CourseQuery || lastUserMessage);
             const lookup = await tool_consultar_conhecimento({
                 supabase,
                 tenantId: payload.tenant_id,
                 leadId: payload.lead_id,
                 telefone: payload.telefone,
-                env,
+                env: {
+                    ...env,
+                    CURRENT_SUBAGENT: 'E1',
+                },
             }, {
                 tipo: 'course',
-                query: String(e1SpecificCourseIntent.query || lastUserMessage),
+                query: preflightQuery,
                 lookup_mode_hint: 'specific',
             }).catch((error) => ({ ok: false, error: String(error) }));
 
@@ -2220,7 +2362,8 @@ serve(async (req) => {
                 leadId: payload.lead_id,
                 eventType: 'test_e1_course_preflight_lookup',
                 payload: {
-                    query: e1SpecificCourseIntent.query || lastUserMessage,
+                    query: preflightQuery,
+                    fallback_query: fallbackE1CourseQuery || null,
                     lookup_ok: lookup?.ok !== false,
                     match_status: lookup?.match_status || null,
                     pending_criterion_before: pendingCriterion,
@@ -2629,6 +2772,19 @@ serve(async (req) => {
                 const liveSalesContextForViolationCheck = ['E1', 'E2'].includes(currentSubagent)
                     ? await readLeadSalesContext(supabase, payload.lead_id)
                     : null;
+                if (
+                    currentSubagent === 'E2'
+                    && String(liveSalesContextForViolationCheck?.e2_availability_objection_kind || '').trim() === 'travel_or_move'
+                    && String(stageOutput.processAction || '').trim() === 'ask_vaccine_decider'
+                    && !e2TravelMoveOutputMatchesModality(stageOutput.text, liveSalesContextForViolationCheck?.modalidade_oferta || leadSnapshot?.modalidade)
+                ) {
+                    stageOutput.text = buildE2TravelMoveDecisionFallback(liveSalesContextForViolationCheck?.modalidade_oferta || leadSnapshot?.modalidade);
+                    stageOutput.responseOrigin = 'structural_contract_recovery';
+                    stageOutput.deterministicReplyUsed = true;
+                    stageOutput.allowedIntent = 'handle_travel_or_move_and_ask_vaccine_decider';
+                    stageOutput.conversationalBehavior = 'clarify_modality_impact_then_ask_decision_maker';
+                    stageOutput.pendingCriterionAfter = 'vaccine_decider';
+                }
                 const earlyStageForbiddenTopicsRaw = ['E1', 'E2'].includes(currentSubagent)
                     ? detectForbiddenEarlyStageTopics(stageOutput.text)
                     : [];
@@ -2705,7 +2861,22 @@ serve(async (req) => {
                     });
                     const originalOutput = stageOutput.text || '';
                     const responseOriginBefore = stageOutput.responseOrigin || 'llm_free_generation';
-                    const deterministicRecovery = null;
+                    const availableCourseLinesForRecovery = Array.isArray(liveSalesContext.available_course_lines)
+                        ? liveSalesContext.available_course_lines
+                        : [];
+                    const deterministicRecovery = currentSubagent === 'E1' && pendingCriterion === 'course_line'
+                        ? {
+                            text: buildE1CourseLineFallback(
+                                String(liveSalesContext.course_display_name || liveLeadForRecovery?.curso_interesse || leadSnapshot?.curso_interesse || '').trim(),
+                                availableCourseLinesForRecovery,
+                            ),
+                            pendingBefore: stageOutput.pendingCriterionBefore || 'course_line',
+                            pendingAfter: 'course_line',
+                            processAction: 'ask_course_line',
+                            allowedIntent: 'ask_course_line_only',
+                            conversationalBehavior: 'list_only_real_available_course_lines_and_wait_choice',
+                        }
+                        : null;
 
                     const allowedIntent = currentSubagent === 'E1'
                         ? pendingCriterion === 'motivation'
@@ -3336,6 +3507,8 @@ serve(async (req) => {
 
                         await mergeLeadSalesContext(supabase, payload.lead_id, {
                             pending_indication_name: null,
+                            pending_indication_phone: activeLastUserMessage.trim(),
+                            referral_registered: true,
                             last_indicated_name: indicatedName || null,
                         });
 
@@ -3371,6 +3544,7 @@ serve(async (req) => {
                     stageOutput.deterministicReplyUsed === true
                     && stageOutput.text
                     && stageOutput.fallbackUsed !== true
+                    && stageOutput.responseOrigin !== 'structural_contract_recovery'
                 ) {
                     const originalOutput = stageOutput.text;
                     const regeneratedOutput = await runSubagent({
@@ -3448,9 +3622,46 @@ serve(async (req) => {
                         ],
                     });
                     const lockedPendingCriterion = pendingCriterionFromProcessAction(stageOutput.processAction || null);
-                    const nextPendingCriterion = lockedPendingCriterion !== undefined
+                    let nextPendingCriterion = lockedPendingCriterion !== undefined
                         ? lockedPendingCriterion
                         : derivedNextPendingCriterion;
+                    if (
+                        currentSubagent === 'E1'
+                        && nextPendingCriterion === 'motivation'
+                        && !isE1CityResolved(liveLeadBeforeAssistant)
+                    ) {
+                        const salesContext = { ...(liveLeadBeforeAssistant?.sales_context || {}) } as Record<string, unknown>;
+                        const courseName = String(
+                            salesContext.course_display_name
+                            || liveLeadBeforeAssistant?.curso_interesse
+                            || 'esse curso',
+                        ).trim();
+                        nextPendingCriterion = 'city';
+                        stageOutput.text = buildE1AskCityFallback(courseName);
+                        stageOutput.processAction = 'ask_city';
+                        stageOutput.allowedIntent = 'confirm_course_available_and_ask_city';
+                        stageOutput.conversationalBehavior = 'acknowledge_course_or_line_choice_and_ask_city';
+                        stageOutput.pendingCriterionAfter = 'city';
+                        stageOutput.responseOrigin = 'structural_contract_recovery';
+                        stageOutput.deterministicReplyUsed = true;
+                        stageOutput.personalityViolations = [];
+                        stageOutput.finalPersonalityValid = true;
+                        await logLeadRuntimeEvent({
+                            supabase,
+                            tenantId: payload.tenant_id,
+                            leadId: payload.lead_id,
+                            eventType: 'test_e1_missing_city_guard',
+                            payload: {
+                                original_process_action: lockedPendingCriterion !== undefined
+                                    ? stageOutput.processAction
+                                    : null,
+                                original_pending_criterion: derivedNextPendingCriterion,
+                                enforced_pending_criterion: nextPendingCriterion,
+                                city_resolved: false,
+                                logged_at: new Date().toISOString(),
+                            },
+                        }).catch(() => {});
+                    }
                     const lastAgentQuestionType = detectLastAgentQuestionType({
                         stage: currentStage,
                         text: stageOutput.text,
@@ -3523,12 +3734,13 @@ serve(async (req) => {
                         stageOutput.pendingCriterionAfter = null;
                         stageOutput.allowedIntent = 'complete_e1_and_handoff_to_e2';
                         stageOutput.conversationalBehavior = 'optional_short_contextual_acknowledgement';
-                        stageOutput.text = buildE1CompletionFallback({
+                        const modelCompletionText = extractModelCompletionAcknowledgement(stageOutput.text || stageOutput.rawModelOutput || stageOutput.outputBeforeGovernance);
+                        stageOutput.text = modelCompletionText || buildE1CompletionFallback({
                             latestUserMessage: activeLastUserMessage,
                             courseName: String(e1LeadSnapshot?.sales_context?.course_display_name || e1LeadSnapshot?.curso_interesse || '').trim() || null,
                         });
-                        stageOutput.deterministicReplyUsed = true;
-                        stageOutput.responseOrigin = 'structural_fallback';
+                        stageOutput.deterministicReplyUsed = !modelCompletionText;
+                        stageOutput.responseOrigin = modelCompletionText ? (stageOutput.responseOrigin || 'llm_free_generation') : 'structural_fallback';
                         await logLeadRuntimeEvent({
                             supabase,
                             tenantId: payload.tenant_id,
@@ -3591,9 +3803,10 @@ serve(async (req) => {
                         stageOutput.allowedIntent = 'complete_e2_and_handoff_to_e3';
                         stageOutput.conversationalBehavior = 'optional_short_contextual_acknowledgement';
                         stageOutput.pendingCriterionAfter = null;
-                        stageOutput.text = buildE2CompletionFallback();
-                        stageOutput.deterministicReplyUsed = true;
-                        stageOutput.responseOrigin = 'structural_fallback';
+                        const modelCompletionText = extractModelCompletionAcknowledgement(stageOutput.text || stageOutput.rawModelOutput || stageOutput.outputBeforeGovernance);
+                        stageOutput.text = modelCompletionText || buildE2CompletionFallback();
+                        stageOutput.deterministicReplyUsed = !modelCompletionText;
+                        stageOutput.responseOrigin = modelCompletionText ? (stageOutput.responseOrigin || 'llm_free_generation') : 'structural_fallback';
 
                         if (!stageOutput.avancou) {
                             try {
@@ -3788,6 +4001,11 @@ serve(async (req) => {
             if (validatedOutbound.changed) {
                 console.warn('[ai-processor] validador final de saida ajustou a mensagem antes do envio');
                 out.text = validatedOutbound.text;
+                if (Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0) {
+                    out.atomicMessages = finalSubagent === 'E3'
+                        ? splitValidatedE3Blocks(validatedOutbound.text)
+                        : [validatedOutbound.text];
+                }
                 await logLeadRuntimeEvent({
                     supabase,
                     tenantId: payload.tenant_id,
@@ -3911,6 +4129,24 @@ serve(async (req) => {
                 },
             }).catch(() => {});
 
+            if (Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0) {
+                const atomicText = out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean).join('\n\n');
+                if (normalizeText(atomicText) !== normalizeText(out.text)) {
+                    out.atomicMessages = finalSubagent === 'E3'
+                        ? splitValidatedE3Blocks(out.text)
+                        : [out.text];
+                }
+            }
+            if (
+                finalSubagent === 'E3'
+                && String(out.processAction || '').trim() !== 'answer_e3_specific_question'
+            ) {
+                const e3Blocks = splitValidatedE3Blocks(out.text);
+                if (e3Blocks.length === 3) {
+                    out.atomicMessages = e3Blocks;
+                }
+            }
+
             const outboundParts = Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0
                 ? out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean)
                 : [out.text];
@@ -4023,7 +4259,7 @@ serve(async (req) => {
                     logged_at: new Date().toISOString(),
                 },
             }).catch(() => {});
-            if (!out.handoff) {
+            if (!out.handoff && !out.avancou) {
                 await logLeadRuntimeEvent({
                     supabase,
                     tenantId: payload.tenant_id,

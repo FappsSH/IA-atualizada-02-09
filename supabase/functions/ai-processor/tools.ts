@@ -79,6 +79,26 @@ function isAllowedLegacyPain(value: unknown) {
     return ['tempo', 'dinheiro', 'ambos'].includes(normalized);
 }
 
+function looksLikeE1MotivationOnly(value: unknown) {
+    const normalized = normalizeCourseText(String(value || ''));
+    if (!normalized) return false;
+    return [
+        'prestar concurso',
+        'para concurso',
+        'meu sonho',
+        'sempre foi meu sonho',
+        'sempre quis',
+        'objetivo pessoal',
+        'objetivo profissional',
+        'ja trabalho',
+        'trabalho na area',
+        'trabalho nessa area',
+        'atuo na area',
+        'quero crescer',
+        'quero migrar',
+    ].some((pattern) => normalized.includes(pattern));
+}
+
 async function validateStageAdvance(ctx: ToolContext, currentStage: string, nextStage: string) {
     const pendingCheckpoint = await getPendingAdminCheckpoint(ctx.supabase, ctx.leadId);
     if (pendingCheckpoint?.id) {
@@ -1227,7 +1247,7 @@ export async function tool_consultar_conhecimento(
         const [{ data: leadContext }, { data: recentMessages }] = await Promise.all([
             ctx.supabase
             .from('leads')
-            .select('curso_interesse, cidade')
+            .select('curso_interesse, cidade, sales_context')
             .eq('id', ctx.leadId)
             .maybeSingle(),
             ctx.supabase
@@ -1240,6 +1260,7 @@ export async function tool_consultar_conhecimento(
 
         const currentCourseInterest = String(leadContext?.curso_interesse || '').trim();
         const currentCity = String(leadContext?.cidade || '').trim();
+        const currentSalesContext = { ...(leadContext?.sales_context || {}) } as Record<string, unknown>;
         const history = (recentMessages || [])
             .slice()
             .reverse()
@@ -1282,6 +1303,38 @@ export async function tool_consultar_conhecimento(
             };
         }
 
+        if (
+            String(ctx.env.CURRENT_SUBAGENT || '').trim() === 'E1'
+            && currentCourseInterest
+            && currentSalesContext.course_status === 'confirmed_available'
+            && looksLikeE1MotivationOnly(normalizedQuery)
+            && !looksLikeCourseContextFollowupQuery(normalizedQuery)
+        ) {
+            return {
+                items: [],
+                total: 0,
+                raw_total: 0,
+                tipo_busca: 'contextual_reply_guard',
+                lookup_mode: 'blocked_contextual_motivation_reply',
+                match_status: 'skipped',
+                catalog_intent: false,
+                resolver_branch: 'blocked_contextual_motivation_reply',
+                catalog_query_type: 'blocked_contextual_motivation_reply',
+                matched_courses: [currentCourseInterest],
+                listed_courses: [],
+                listed_areas: [],
+                available_areas: [],
+                raw_inbound: args.query,
+                normalized_inbound: normalizedQuery,
+                query_processada: normalizedQuery,
+                effective_query: currentCourseInterest,
+                fallback_query: null,
+                query_context_mode: 'blocked_motivation_reply',
+                candidates_considered: [],
+                nota: 'Consulta ignorada porque a mensagem parece motivacao de E1 e o curso atual ja estava confirmado.',
+            };
+        }
+
         const useCurrentCourseContext = Boolean(currentCourseInterest)
             && looksLikeCourseContextFollowupQuery(normalizedQuery);
         const effectiveQuery = useCurrentCourseContext ? currentCourseInterest : normalizedQuery;
@@ -1303,9 +1356,10 @@ export async function tool_consultar_conhecimento(
         let requestedAreaConfidence = 'none';
         let requestedAreaSource: string | null = null;
         let semanticAvailableAreas: string[] = [];
+        let specificResolution: any = null;
 
         if (structuredEntries.length > 0) {
-            let specificResolution = resolveStructuredSpecificCourses(effectiveQuery, structuredEntries);
+            specificResolution = resolveStructuredSpecificCourses(effectiveQuery, structuredEntries);
             if (
                 lookupMode !== 'specific'
                 && !hasBroadBrowseIntent(effectiveQuery)
@@ -1391,7 +1445,13 @@ export async function tool_consultar_conhecimento(
             ? [currentCourseInterest]
             : matchedCourses;
 
-        const availableCourseLines = listAvailableCourseLines(listedCourses.length > 0 ? listedCourses : finalMatchedCourses);
+        const availableCourseLineSource = lookupMode === 'specific'
+            ? [
+                ...(specificResolution?.listedEntries || []),
+                ...(specificResolution?.matchedEntries || []),
+              ].map((entry: any) => String(entry?.display_name || ''))
+            : (listedCourses.length > 0 ? listedCourses : finalMatchedCourses);
+        const availableCourseLines = listAvailableCourseLines(availableCourseLineSource);
 
         if (lookupMode === 'specific' && matchStatus === 'ambiguous_found' && availableCourseLines.length === 1) {
             matchStatus = 'found';
@@ -1409,9 +1469,14 @@ export async function tool_consultar_conhecimento(
             relatedAreaCourses,
         });
 
-        if (lookupMode === 'specific' && matchStatus === 'found') {
+        const shouldPersistCourseLookupState = String(ctx.env.CURRENT_SUBAGENT || 'E1').trim() === 'E1';
+
+        if (shouldPersistCourseLookupState && lookupMode === 'specific' && matchStatus === 'found') {
             const degreeLevel = String(matchedEntryForPersistence?.degree_level || '').trim();
             const deliveryMode = String(matchedEntryForPersistence?.delivery_mode || '').trim();
+            const rawCourseName = String(matchedEntryForPersistence?.display_name || finalMatchedCourses[0] || effectiveQuery || '').trim() || null;
+            const cleanCourseName = getCourseDisplayName(String(rawCourseName || ''))
+                || rawCourseName;
             const { data: currentLead } = await ctx.supabase
                 .from('leads')
                 .select('sales_context')
@@ -1421,7 +1486,7 @@ export async function tool_consultar_conhecimento(
             await ctx.supabase
                 .from('leads')
                 .update({
-                    curso_interesse: String(matchedEntryForPersistence?.display_name || finalMatchedCourses[0] || effectiveQuery || '').trim() || null,
+                    curso_interesse: rawCourseName,
                     modalidade: isAllowedDeliveryMode(deliveryMode) ? deliveryMode : null,
                     sales_context: {
                         ...(currentLead?.sales_context || {}),
@@ -1430,7 +1495,7 @@ export async function tool_consultar_conhecimento(
                         requested_course: effectiveQuery,
                         catalog_mode: 'inactive',
                         catalog_exploration_intent: false,
-                        course_display_name: getCourseDisplayName(String(matchedEntryForPersistence?.display_name || finalMatchedCourses[0] || '')) || null,
+                        course_display_name: cleanCourseName,
                         line_selection_required: false,
                         linha_formacao: normalizeLineFormation(degreeLevel),
                         available_course_lines: availableCourseLines,
@@ -1447,7 +1512,10 @@ export async function tool_consultar_conhecimento(
                     updated_at: new Date().toISOString(),
                 })
                 .eq('id', ctx.leadId);
-        } else if (lookupMode === 'specific' && matchStatus === 'ambiguous_found') {
+        } else if (shouldPersistCourseLookupState && lookupMode === 'specific' && matchStatus === 'ambiguous_found') {
+            const rawCourseName = String((specificResolution?.listedEntries || [])[0]?.display_name || listedCourses[0] || effectiveQuery || '').trim() || null;
+            const cleanCourseName = getCourseDisplayName(String(rawCourseName || ''))
+                || rawCourseName;
             const { data: currentLead } = await ctx.supabase
                 .from('leads')
                 .select('sales_context')
@@ -1457,14 +1525,14 @@ export async function tool_consultar_conhecimento(
             await ctx.supabase
                 .from('leads')
                 .update({
-                    curso_interesse: String((specificResolution?.listedEntries || [])[0]?.display_name || listedCourses[0] || effectiveQuery || '').trim() || null,
+                    curso_interesse: rawCourseName,
                     sales_context: {
                         ...(currentLead?.sales_context || {}),
                         course_validated: false,
                         course_status: normalizedCourseState.course_status,
                         catalog_mode: 'inactive',
                         catalog_exploration_intent: false,
-                        course_display_name: getCourseDisplayName(String((specificResolution?.listedEntries || [])[0]?.display_name || listedCourses[0] || '')) || null,
+                        course_display_name: cleanCourseName,
                         line_selection_required: true,
                         linha_formacao: null,
                         available_course_lines: availableCourseLines,
@@ -1477,7 +1545,7 @@ export async function tool_consultar_conhecimento(
                     updated_at: new Date().toISOString(),
                 })
                 .eq('id', ctx.leadId);
-        } else if (lookupMode === 'specific' && matchStatus === 'not_found') {
+        } else if (shouldPersistCourseLookupState && lookupMode === 'specific' && matchStatus === 'not_found') {
             const { data: currentLead } = await ctx.supabase
                 .from('leads')
                 .select('sales_context')
@@ -1507,7 +1575,7 @@ export async function tool_consultar_conhecimento(
                     updated_at: new Date().toISOString(),
                 })
                 .eq('id', ctx.leadId);
-        } else if (lookupMode !== 'specific') {
+        } else if (shouldPersistCourseLookupState && lookupMode !== 'specific') {
             const { data: currentLead } = await ctx.supabase
                 .from('leads')
                 .select('sales_context')

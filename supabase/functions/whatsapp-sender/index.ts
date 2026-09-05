@@ -158,7 +158,9 @@ serve(async (req) => {
           timeZone: runtimeConfig.businessHours?.tz || 'America/Porto_Velho',
         });
 
-    const partes = splitForWhatsappDelivery(governedText, runtimeConfig.messagePolicy);
+    const partes = skip_governance
+        ? [String(governedText || '').trim()].filter(Boolean)
+        : splitForWhatsappDelivery(governedText, runtimeConfig.messagePolicy);
 
     const resultados: EvolutionSendResult[] = [];
     const sentOutputParts: string[] = [];

@@ -27,7 +27,13 @@ const BLOCKED_PARAGRAPH_PATTERNS = [
   'etapa concluída',
   'agora vou para outra etapa',
   'vamos seguir',
+  'vamos avancar',
+  'vamos avanÃ§ar',
   'vamos continuar',
+  'para seguirmos',
+  'para continuarmos',
+  'estou aqui para ajudar',
+  'mas estou aqui para ajudar',
   'recebido',
   'informacao recebida',
   'informação recebida',
@@ -47,6 +53,16 @@ function sanitizeParagraph(paragraph: string) {
   next = next
     .replace(/\bAREA BASICA DE INGRESSO\b/gi, '')
     .replace(/\bABI\b/gi, '')
+    .replace(/\bCST\s+EM\s+/gi, '')
+    .replace(/\bTecn[oó]logo\b/gi, 'graduação')
+    .replace(/\bAstrof[ií]sica\s+Qu[aâ]ntica\b/gi, 'essa graduação específica')
+    .replace(/\bgradua[cç][aã]o em essa gradua[cç][aã]o espec[ií]fica\b/gi, 'graduação específica')
+    .replace(/^\s*e?\s*para seguirmos,?\s*/gi, '')
+    .replace(/^\s*e?\s*para continuarmos,?\s*/gi, '')
+    .replace(/\bpara seguirmos,?\s*poderia me informar\b/gi, 'me informa')
+    .replace(/\bpara continuarmos,?\s*poderia me informar\b/gi, 'me informa')
+    .replace(/\s*Estou aqui para ajudar[^.!?]*[.!?]?/gi, '')
+    .replace(/\s*Mas estou aqui para ajudar[^.!?]*[.!?]?/gi, '')
     .replace(/\bP\s*EGRESSO\b/gi, '')
     .replace(/\bEGRESSO\b/gi, '')
     .replace(/\(\s*\)/g, '')
@@ -93,4 +109,3 @@ export function validateOutboundText(text: string) {
   const changed = next !== source || reasons.length > 0;
   return { text: next || source, changed, reasons };
 }
-

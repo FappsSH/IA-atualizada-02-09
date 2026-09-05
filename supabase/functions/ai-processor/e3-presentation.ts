@@ -28,11 +28,13 @@ export function formatDurationYearsFromSemesters(semesters: unknown) {
 
 export function buildE3PresentationMessages(params: {
   leadSnapshot: Record<string, unknown> | null | undefined;
+  authorizedFacts?: Array<Record<string, unknown>>;
 }) {
   const lead = params.leadSnapshot || {};
   const salesContext = { ...(lead.sales_context || {}) } as Record<string, unknown>;
-  const claims = { ...(salesContext.institutional_claims_authorized || {}) } as Record<string, unknown>;
-  const tutorClaims = { ...(salesContext.tutor_claims_authorized || {}) } as Record<string, unknown>;
+  const authorizedFacts = Array.isArray(params.authorizedFacts) ? params.authorizedFacts : [];
+  const factByKey = new Map(authorizedFacts.map((fact) => [String(fact.claim_key || ''), fact]));
+  const hasFact = (key: string) => factByKey.has(key);
   const courseName = getCourseDisplayName(String(
     salesContext.course_display_name || salesContext.curso_base_nome || lead.curso_interesse || 'seu curso',
   ));
@@ -46,17 +48,35 @@ export function buildE3PresentationMessages(params: {
   const firstName = getTrustedOpeningFirstName(lead);
 
   const institutionFacts = [
-    'Vamos la entao, ja quero comecar te apresentando a Universidade Cruzeiro do Sul.',
-    claims.university_status === true
-      ? 'Esse ponto e importante porque voce esta falando com uma Universidade, nao apenas com uma faculdade isolada.'
+    'Vamos la entao, quero te apresentar alguns pontos importantes da Cruzeiro do Sul.',
+    hasFact('institution_is_university')
+      ? String(factByKey.get('institution_is_university')?.content || '')
       : '',
-    claims.market_years === true
-      ? 'A instituicao tambem tem uma historia forte no mercado educacional.'
+    hasFact('institution_diploma_international_recognition')
+      ? String(factByKey.get('institution_diploma_international_recognition')?.content || '')
       : '',
-    claims.mec_score === true
-      ? 'E trabalha com avaliacao institucional reconhecida dentro dos criterios oficiais.'
+    hasFact('institution_university_advantage_vs_college')
+      ? String(factByKey.get('institution_university_advantage_vs_college')?.content || '')
+      : '',
+    hasFact('institution_60_plus_years')
+      ? String(factByKey.get('institution_60_plus_years')?.content || '')
+      : '',
+    hasFact('institution_maximum_mec_rating')
+      ? String(factByKey.get('institution_maximum_mec_rating')?.content || '')
+      : '',
+    hasFact('institution_maximum_mec_since_beginning')
+      ? String(factByKey.get('institution_maximum_mec_since_beginning')?.content || '')
       : '',
   ].filter(Boolean);
+
+  const modalityFacts = authorizedFacts
+    .filter((fact) => fact.category === 'course_methodology')
+    .map((fact) => String(fact.content || '').trim())
+    .filter(Boolean);
+  const tutoringFacts = authorizedFacts
+    .filter((fact) => fact.category === 'tutoring')
+    .map((fact) => String(fact.content || '').trim())
+    .filter(Boolean);
 
   const courseFacts = [
     `Sobre ${courseName}, a ideia aqui e te mostrar de forma bem clara como essa formacao pode encaixar no seu momento.`,
@@ -71,21 +91,27 @@ export function buildE3PresentationMessages(params: {
     modality === 'semipresencial'
       ? 'A forma de estudo e semipresencial, com acompanhamento pela plataforma conforme funcionamento autorizado do curso.'
       : '',
-    tutorClaims.awarded_best_brazil === true
-      ? 'Pra finalizar, voce tera tutores acompanhando sua jornada, com suporte reconhecido dentro da instituicao.'
-      : 'Pra finalizar, voce tera suporte de tutores durante a jornada, dentro do que o curso oferece oficialmente.',
+    ...modalityFacts,
+    ...tutoringFacts,
   ].filter(Boolean);
 
   const closing = firstName
     ? `De todos esses pontos que eu trouxe pra voce ${firstName}, tem algum em especifico que voce tem alguma duvida?`
     : 'De todos esses pontos que eu trouxe pra voce, tem algum em especifico que ficou com duvida?';
 
-  const pendingClaims = [];
-  if (claims.international_recognition !== true) pendingClaims.push('international_recognition');
-  if (claims.university_vs_faculty_difference !== true) pendingClaims.push('university_vs_faculty_difference');
-  if (claims.market_years !== true) pendingClaims.push('market_years');
-  if (claims.mec_score !== true) pendingClaims.push('mec_score');
-  if (tutorClaims.awarded_best_brazil !== true) pendingClaims.push('tutor_awards_best_brazil');
+  const expectedClaims = [
+    'institution_is_university',
+    'institution_diploma_international_recognition',
+    'institution_university_advantage_vs_college',
+    'institution_60_plus_years',
+    'institution_maximum_mec_rating',
+    'institution_maximum_mec_since_beginning',
+    'tutoring_full_journey_support',
+    'tutoring_deadline_reminders',
+    'tutoring_awarded',
+    'tutoring_best_in_brazil',
+  ];
+  const pendingClaims = expectedClaims.filter((key) => !hasFact(key));
 
   return {
     messages: [
@@ -99,6 +125,7 @@ export function buildE3PresentationMessages(params: {
       duration_semesters: durationSemesters || null,
       duration_years: durationYears || null,
       modality: modality || null,
+      e3_authorized_facts: authorizedFacts,
     },
   };
 }

@@ -12,7 +12,8 @@ export type KnowledgeType =
   | 'offer'
   | 'policy'
   | 'script'
-  | 'objection_playbook';
+  | 'objection_playbook'
+  | 'claim';
 
 function normalize(value: string) {
   return (value || '')
@@ -190,6 +191,94 @@ export async function queryKnowledgeBase(params: {
   }
 
   return ranked;
+}
+
+function normalizeModality(value: unknown) {
+  const normalized = normalize(String(value || ''));
+  if (normalized.includes('ead')) return 'ead';
+  if (normalized.includes('semipresencial')) return 'semipresencial';
+  return '';
+}
+
+function splitScope(value: unknown) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function claimMatchesStage(item: any, stage: string) {
+  const normalizedStage = String(stage || '').trim().toUpperCase();
+  if (!normalizedStage) return true;
+  const scopes = [
+    ...splitScope(item.scope),
+    ...splitScope(item.stage),
+    ...splitScope(item.value?.scope),
+    ...splitScope(item.value?.stage),
+  ].map((item) => item.toUpperCase());
+  return scopes.length === 0 || scopes.includes('GLOBAL') || scopes.includes(normalizedStage);
+}
+
+function claimMatchesModality(item: any, modality: unknown) {
+  const expected = normalizeModality(item.metadata?.modality || item.value?.modality);
+  if (!expected) return true;
+  return expected === normalizeModality(modality);
+}
+
+export async function getAuthorizedKnowledgeFacts(params: {
+  supabase: any;
+  tenantId: string;
+  stage: string;
+  modality?: unknown;
+  processAction?: string | null;
+  categories?: string[];
+}) {
+  let query = params.supabase
+    .from('knowledge_items')
+    .select('id, key, claim_key, category, label, value, scope, stage, active, authorized, source_type, status, priority, metadata, updated_at')
+    .eq('tenant_id', params.tenantId)
+    .eq('type', 'claim')
+    .eq('active', true)
+    .eq('authorized', true)
+    .eq('source_type', 'admin_defined')
+    .eq('status', 'published')
+    .order('priority', { ascending: true })
+    .order('label', { ascending: true });
+
+  if (params.categories?.length) {
+    query = query.in('category', params.categories);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (error.message?.includes('does not exist') || error.message?.includes('column') || error.message?.includes('relation')) {
+      return [];
+    }
+    throw error;
+  }
+
+  const stage = String(params.stage || '').trim().toUpperCase();
+  const allowE2Methodology = stage !== 'E2'
+    || String(params.processAction || '').trim() === 'handle_travel_or_move_and_ask_vaccine_decider';
+
+  return (data || [])
+    .filter((item: any) => claimMatchesStage(item, stage))
+    .filter((item: any) => claimMatchesModality(item, params.modality))
+    .filter((item: any) => allowE2Methodology || item.category !== 'course_methodology')
+    .map((item: any) => ({
+      id: item.id,
+      claim_key: item.claim_key || item.key,
+      category: item.category,
+      title: item.label,
+      content: item.value?.content || item.value?.texto || item.value?.descricao || '',
+      scope: item.scope || item.value?.scope || 'global',
+      stage: item.stage || item.value?.stage || null,
+      status: item.status,
+      priority: item.priority,
+      source_type: item.source_type,
+      authorized: item.authorized === true,
+    }))
+    .filter((item: any) => item.content);
 }
 
 export function knowledgeItemsToPrompt(items: any[]) {

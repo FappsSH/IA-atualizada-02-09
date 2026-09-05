@@ -40,6 +40,33 @@ describe('personality output guard', () => {
     expect(result.personality_violations).toContain('redundant_city_restatement');
   });
 
+  it('detecta repeticao de cidade mesmo quando proxima acao ja e motivacao', () => {
+    const result = detectPersonalityOutputViolations({
+      stage: 'E1',
+      text: 'Que legal que voce e de Vilhena! Me conta, voce ja trabalha nessa area?',
+      latestUserMessage: 'Sou de Vilhena',
+      savedCity: 'Vilhena',
+      processAction: 'ask_motivation',
+      pendingCriterion: 'motivation',
+      courseStatus: 'confirmed_available',
+    });
+
+    expect(result.personality_guard_triggered).toBe(true);
+    expect(result.personality_violations).toContain('redundant_city_restatement');
+  });
+
+  it('detecta repeticao da vacina 2 quando a acao ja e vacina 3', () => {
+    const result = detectPersonalityOutputViolations({
+      stage: 'E2',
+      text: 'Voce decide por voce mesmo ou costuma conversar com alguem antes?\n\nCombinado?',
+      processAction: 'ask_vaccine_agreement',
+      courseStatus: 'confirmed_available',
+    });
+
+    expect(result.personality_guard_triggered).toBe(true);
+    expect(result.personality_violations).toContain('repeated_resolved_criterion:vaccine_decider');
+  });
+
   it('detecta mencao desnecessaria de linha unica na E1', () => {
     const result = detectPersonalityOutputViolations({
       stage: 'E1',
@@ -144,6 +171,29 @@ describe('personality output guard', () => {
     });
 
     expect(result.personality_violations).not.toContain('system_narration:sistema');
+    expect(result.personality_guard_triggered).toBe(false);
+  });
+
+  it('bloqueia claim E3 quando a claim_key nao veio autorizada', () => {
+    const result = detectPersonalityOutputViolations({
+      stage: 'E3',
+      text: 'Somos nota máxima no MEC desde quando começamos.',
+      processAction: 'present_e3_structured_blocks',
+      e3AuthorizedClaimKeys: [],
+    });
+
+    expect(result.personality_guard_triggered).toBe(true);
+    expect(result.personality_violations).toContain('unauthorized_stage_fact:desde quando comecamos');
+  });
+
+  it('libera claim E3 quando a claim_key veio autorizada pelo banco', () => {
+    const result = detectPersonalityOutputViolations({
+      stage: 'E3',
+      text: 'Somos nota máxima no MEC desde quando começamos.',
+      processAction: 'present_e3_structured_blocks',
+      e3AuthorizedClaimKeys: ['institution_maximum_mec_since_beginning'],
+    });
+
     expect(result.personality_guard_triggered).toBe(false);
   });
 });

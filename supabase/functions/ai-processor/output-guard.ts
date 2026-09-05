@@ -121,6 +121,7 @@ function systemNarrationMatches(normalized: string) {
 const TECHNICAL_COURSE_NAME_PATTERNS = [
   /\bcst\b/i,
   /\babi\b/i,
+  /\btecn[oó]logo\b/i,
   /\barea basica de ingresso\b/i,
   /\bp\s*egresso\b/i,
 ];
@@ -163,6 +164,17 @@ const STAGE_POLICIES = {
   },
 } as Record<string, { deny: string[] }>;
 
+const E3_CLAIM_GUARD_PATTERNS = [
+  { claimKey: 'institution_maximum_mec_since_beginning', patterns: ['desde quando comecamos', 'desde quando começamos'] },
+  { claimKey: 'tutoring_deadline_reminders', patterns: ['tutores lembram', 'lembrar das datas', 'lembram das datas', 'lembrar os prazos', 'lembram os prazos'] },
+  { claimKey: 'tutoring_best_in_brazil', patterns: ['melhores tutores do brasil', 'melhores do brasil'] },
+  { claimKey: 'semipresencial_live_online_classes', patterns: ['aulas ao vivo nos primeiros semestres', 'aulas ao vivo pela plataforma de onde estiver'] },
+  { claimKey: 'ead_flexible_study_schedule', patterns: ['dia e horario que quiser', 'dia e horário que quiser'] },
+  { claimKey: 'institution_university_advantage_vs_college', patterns: ['faculdade ou centro universitario nao', 'faculdade ou centro universitário não'] },
+  { claimKey: 'institution_is_university', patterns: ['nao apenas com uma faculdade isolada', 'não apenas com uma faculdade isolada'] },
+  { claimKey: 'tutoring_full_journey_support', patterns: ['tutores vao te acompanhar do comeco ao fim', 'tutores vão te acompanhar do começo ao fim', 'acompanhar do comeco ao fim', 'acompanhar do começo ao fim'] },
+];
+
 export function detectPersonalityOutputViolations(params: {
   stage: string;
   text: string | undefined;
@@ -175,6 +187,7 @@ export function detectPersonalityOutputViolations(params: {
   relatedAreaCourses?: string[];
   availableCourseLines?: string[];
   pendingCriterion?: string | null;
+  e3AuthorizedClaimKeys?: string[];
 }) {
   const normalized = normalizeText(params.text || '');
   const violations: string[] = [];
@@ -235,15 +248,18 @@ export function detectPersonalityOutputViolations(params: {
       .map((pattern) => `unavailable_dead_end_tone:${pattern}`));
   }
 
-  const repeatedCityDetected = params.contextualReplyKind === 'city'
-    && (() => {
-      const rawCity = normalizeText(params.savedCity || params.latestUserMessage || '')
-        .replace(/^sou de /, '')
-        .replace(/^moro em /, '')
-        .replace(/^resido em /, '')
-        .trim();
-      return Boolean(rawCity) && normalized.includes(rawCity);
-    })();
+  const repeatedCityDetected = (() => {
+    if (params.stage !== 'E1') return false;
+    const rawCity = normalizeText(params.savedCity || params.latestUserMessage || '')
+      .replace(/^sou de /, '')
+      .replace(/^moro em /, '')
+      .replace(/^resido em /, '')
+      .trim();
+    if (!rawCity || !normalized.includes(rawCity)) return false;
+    return params.contextualReplyKind === 'city'
+      || String(params.processAction || '').trim() === 'ask_motivation'
+      || String(params.pendingCriterion || '').trim() === 'motivation';
+  })();
   if (repeatedCityDetected) {
     violations.push('redundant_city_restatement');
   }
@@ -281,7 +297,17 @@ export function detectPersonalityOutputViolations(params: {
   });
   violations.push(...earlyStageCourseLineLeakViolations);
 
-  const deniedStagePatterns = (STAGE_POLICIES[String(params.stage || '')]?.deny || []).filter((pattern) => {
+  const e3AuthorizedClaimKeys = new Set((params.e3AuthorizedClaimKeys || []).map((key) => String(key || '').trim()));
+  const e3DeniedClaimPatterns = String(params.stage || '') === 'E3'
+    ? E3_CLAIM_GUARD_PATTERNS
+      .filter((item) => !e3AuthorizedClaimKeys.has(item.claimKey))
+      .flatMap((item) => item.patterns)
+    : [];
+  const baseDeniedStagePatterns = [
+    ...(STAGE_POLICIES[String(params.stage || '')]?.deny || []),
+    ...e3DeniedClaimPatterns,
+  ];
+  const deniedStagePatterns = baseDeniedStagePatterns.filter((pattern) => {
     const normalizedPattern = normalizeText(pattern);
     if (allowE2AgreementBolsa && normalizedPattern === 'bolsa') return false;
     if (allowE2TravelMoveModality && normalizedPattern === 'modalidade') return false;
@@ -369,6 +395,56 @@ export function detectPersonalityOutputViolations(params: {
     violations.push('repeated_resolved_criterion:commercial_agreement');
   }
 
+  if (
+    params.stage === 'E2'
+    && String(params.processAction || '').trim() === 'ask_vaccine_agreement'
+    && textIncludesAny(normalized, [
+      'decide por voce mesmo',
+      'decide por você mesmo',
+      'decide sozinho',
+      'costuma conversar com alguem',
+      'costuma conversar com alguém',
+      'conversa com alguem antes',
+      'conversa com alguém antes',
+    ])
+  ) {
+    violations.push('repeated_resolved_criterion:vaccine_decider');
+  }
+
+  if (
+    params.stage === 'E2'
+    && String(params.processAction || '').trim() === 'ask_vaccine_agreement'
+    && textIncludesAny(normalizeText(params.latestUserMessage || ''), [
+      'marido',
+      'esposa',
+      'mae',
+      'mãe',
+      'pai',
+      'familia',
+      'família',
+      'converso com',
+    ])
+    && !textIncludesAny(normalized, ['duvida', 'dúvida', 'pergunta', 'marido', 'esposa', 'mae', 'mãe', 'pai', 'familia', 'família'])
+  ) {
+    violations.push('missing_third_party_decider_acknowledgement');
+  }
+
+  if (
+    params.stage === 'E7'
+    && String(params.processAction || '').trim() === 'human_final_closing'
+    && textIncludesAny(normalized, [
+      'telefone',
+      'matricula',
+      'matrÃ­cula',
+      'curso',
+      'cidade',
+      'seguir adiante',
+      'seguir',
+    ])
+  ) {
+    violations.push('e7_final_closing_reopened_process');
+  }
+
   const actionPatterns: Record<string, string[]> = {
     ask_city: ['qual cidade', 'de qual cidade', 'de onde voce fala', 'de onde você fala', 'em qual cidade', 'de que cidade'],
     ask_motivation: ['ja trabalha na area', 'já trabalha na área', 'sonho ou objetivo pessoal', 'representa um sonho'],
@@ -384,7 +460,7 @@ export function detectPersonalityOutputViolations(params: {
   const processAction = String(params.processAction || '').trim();
   if (processAction && actionPatterns[processAction]) {
     const matchesExpectedQuestion = textIncludesAny(normalized, actionPatterns[processAction]);
-    if (!matchesExpectedQuestion && processAction !== 'advance_to_E2') {
+    if (!matchesExpectedQuestion && processAction !== 'advance_to_E2' && !(processAction === 'ask_vaccine_agreement' && isAllowedE2AgreementLanguage(params.text))) {
       violations.push(`question_mismatch:${processAction}`);
     }
   }

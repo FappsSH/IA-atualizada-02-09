@@ -8,7 +8,7 @@ import { chatCompletions, type ChatMessage } from '../_shared/openai-client.ts';
 import { buildGovernanceTagsPrompt } from '../_shared/message-governance.ts';
 import { TOOL_SCHEMAS } from './tool-schemas.ts';
 import { TOOL_IMPL, type ToolContext } from './tools.ts';
-import { fetchKnowledgeItems, knowledgeItemsToPrompt } from './knowledge.ts';
+import { fetchKnowledgeItems, getAuthorizedKnowledgeFacts, knowledgeItemsToPrompt } from './knowledge.ts';
 import { detectCatalogIntentWithHistory, detectContextualReplyKind, isMediaPlaceholderMessage } from './catalog-resolver.ts';
 import { classifyInboundAgainstStageState, derivePendingCriterion, getNextE1Criterion, getNextE2Criterion } from './stage-state.ts';
 import { extractFirstName } from '../_shared/lead-name.ts';
@@ -482,6 +482,27 @@ function looksLikeCurrentCourseFollowup(message: string) {
   return patterns.some((pattern) => normalized.includes(pattern));
 }
 
+function looksLikeE3SpecificQuestion(message: string) {
+  const normalized = normalizeIntentText(message);
+  if (!normalized) return false;
+  if (/\b(valor|valores|preco|precos|bolsa|desconto|matricula|inscricao)\b/.test(normalized)) {
+    return false;
+  }
+
+  const hasQuestionMarker = /(\?|como|qual|quais|quando|onde|funciona|funcionam|duvida|explica|me fala|me conta|queria saber)/.test(normalized);
+  const hasE3Topic = /\b(tutor|tutores|tutoria|suporte|academico|professor|professores|aula|aulas|ead|semipresencial|presencial|modalidade|duracao|dura quanto|instituicao|universidade|diploma|mec|nota maxima)\b/.test(normalized);
+
+  return hasQuestionMarker && hasE3Topic;
+}
+
+function looksLikeBroadCatalogRequest(message: string) {
+  const normalized = normalizeIntentText(message);
+  if (!normalized) return false;
+  return /\b(quais|qual|conhecer|mostrar|ver|opcoes|opcao|cursos|graduacoes|graduacao)\b/.test(normalized)
+    && /\b(cursos|graduacoes|graduacao|opcoes|opcao)\b/.test(normalized)
+    && !/\b(radiologia|administracao|ciencias biologicas|analise e desenvolvimento|psicoterapia|astrofisica)\b/.test(normalized);
+}
+
 function hasAnyCourseLookup(toolCalls: Array<{ name: string; args: unknown; result?: unknown; blocked?: boolean }>) {
   return toolCalls.some((call) => {
     if (call.name !== 'consultar_conhecimento') return false;
@@ -931,6 +952,7 @@ function buildStageContractContext(params: {
   currentCourseInterest: string;
   currentCity: string;
   leadSnapshot: Record<string, unknown> | null | undefined;
+  authorizedFacts?: Array<Record<string, unknown>>;
 }) {
   const salesContext = { ...((params.leadSnapshot?.sales_context || {}) as Record<string, unknown>) };
   const effectiveCourseInterest = String(params.leadSnapshot?.curso_interesse || params.currentCourseInterest || '').trim();
@@ -950,6 +972,7 @@ function buildStageContractContext(params: {
     : [];
   const speakableCourseName = deriveSpeakableCourseName(effectiveCourseInterest, salesContext);
   const speakableCourseLine = ['E1', 'E2'].includes(params.stage) ? null : courseLine;
+  const e3AuthorizedFacts = params.stage === 'E3' ? (params.authorizedFacts || []) : null;
   const speakableFacts: Record<string, unknown> = {
     course_name: speakableCourseName,
     course_line: speakableCourseLine,
@@ -958,6 +981,10 @@ function buildStageContractContext(params: {
     pending_criterion_before: params.pendingCriterionBefore,
     pending_criterion_after: params.pendingCriterionAfter,
   };
+  if (e3AuthorizedFacts) {
+    speakableFacts.e3_authorized_facts = e3AuthorizedFacts;
+    speakableFacts.e3_authorized_claim_keys = e3AuthorizedFacts.map((fact: any) => fact.claim_key).filter(Boolean);
+  }
   if (requestedCourse) speakableFacts.requested_course = requestedCourse;
   if (requestedArea) speakableFacts.requested_area = requestedArea;
   if (relatedAreaCourses.length > 0) speakableFacts.related_area_courses = relatedAreaCourses;
@@ -1084,6 +1111,26 @@ function buildStageContractContext(params: {
         speakableFacts,
       };
     }
+  }
+
+  if (params.stage === 'E7') {
+    if (salesContext.referral_registered === true || String(salesContext.pending_indication_phone || '').trim()) {
+      return {
+        processAction: 'prepare_referral_and_close',
+        conversationalBehavior: 'tell_enrolled_student_to_warn_the_referred_person_then_close_humanly',
+        allowedIntent: 'prepare_registered_referral_without_requalifying_or_asking_new_referral',
+        speakableFacts: {
+          ...speakableFacts,
+          indicated_name: String(salesContext.last_indicated_name || '').trim() || null,
+        },
+      };
+    }
+    return {
+      processAction: 'human_final_closing',
+      conversationalBehavior: 'close_without_reopening_sales_or_referral_collection',
+      allowedIntent: 'close_conversation_humanly_without_new_questions',
+      speakableFacts,
+    };
   }
 
   return {
@@ -1288,7 +1335,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.outputBeforeGovernance = out.text;
     return out;
   }
-  if (false && input.etapaAtual === 'E3') {
+  if (input.etapaAtual === 'E3') {
     const e3Pending = derivePendingCriterion({
       stage: input.etapaAtual,
       leadSnapshot: input.leadSnapshot || leadContext || null,
@@ -1297,8 +1344,15 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     const e3SalesContext = { ...((leadContext?.sales_context || input.leadSnapshot?.sales_context || {}) as Record<string, unknown>) };
 
     if (e3Pending === 'presentation' && e3SalesContext.e3_presentation_complete !== true) {
+      const authorizedFacts = await getAuthorizedKnowledgeFacts({
+        supabase: input.supabase,
+        tenantId: input.tenantId,
+        stage: 'E3',
+        modality: e3SalesContext.modalidade_oferta || e3SalesContext.delivery_mode || leadContext?.modalidade || null,
+      });
       const presentation = buildE3PresentationMessages({
         leadSnapshot: input.leadSnapshot || leadContext || null,
+        authorizedFacts,
       });
       out.text = normalizeMessageText(presentation.messages.join('\n\n'));
       out.atomicMessages = presentation.messages;
@@ -1346,6 +1400,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const currentCourseInterest = String(leadContext?.curso_interesse || '').trim();
   const currentCity = String(leadContext?.cidade || '').trim();
   const currentSalesContext = { ...(leadContext?.sales_context || {}) } as Record<string, unknown>;
+  let authorizedFactsForStage: Array<Record<string, unknown>> = [];
   const stageState = classifyInboundAgainstStageState({
     stage: input.etapaAtual,
     leadSnapshot: input.leadSnapshot || leadContext || null,
@@ -1368,6 +1423,20 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     leadSnapshot: virtualLeadSnapshot,
     history,
   });
+  const provisionalProcessAction = input.etapaAtual === 'E2'
+    && stageState.classificationReason === 'resolved_pending_vaccine_1_travel_or_move'
+    && pendingCriterionAfter === 'vaccine_decider'
+    ? 'handle_travel_or_move_and_ask_vaccine_decider'
+    : null;
+  if (input.etapaAtual === 'E3' || provisionalProcessAction) {
+    authorizedFactsForStage = await getAuthorizedKnowledgeFacts({
+      supabase: input.supabase,
+      tenantId: input.tenantId,
+      stage: input.etapaAtual,
+      modality: currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || leadContext?.modalidade || null,
+      processAction: provisionalProcessAction,
+    });
+  }
   const stageContract = buildStageContractContext({
     stage: input.etapaAtual,
     pendingCriterionBefore,
@@ -1376,8 +1445,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     currentCourseInterest,
     currentCity,
     leadSnapshot: virtualLeadSnapshot,
+    authorizedFacts: authorizedFactsForStage,
   });
-  const stabilizedStageContract = input.etapaAtual === 'E1'
+  let stabilizedStageContract = input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_course_line'
     && pendingCriterionAfter === 'city'
     ? {
@@ -1405,13 +1475,61 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           pending_criterion_after: null,
         },
       }
+      : input.etapaAtual === 'E3'
+          && stageState.classificationReason === 'resolved_pending_e3_interest_signal'
+          && pendingCriterionAfter === null
+        ? {
+          ...stageContract,
+          processAction: 'complete_stage',
+          conversationalBehavior: 'optional_short_contextual_acknowledgement_before_e4',
+          allowedIntent: 'complete_e3_and_handoff_to_e4',
+          speakableFacts: {
+            ...(stageContract.speakableFacts || {}),
+            pending_criterion_before: pendingCriterionBefore,
+            pending_criterion_after: null,
+          },
+        }
       : stageContract;
+  const e3SpecificQuestion = input.etapaAtual === 'E3'
+    && pendingCriterionBefore === 'interest_signal'
+    && pendingCriterionAfter === 'interest_signal'
+    && looksLikeE3SpecificQuestion(latestUserMessage);
+  if (e3SpecificQuestion) {
+    stabilizedStageContract = {
+      ...stageContract,
+      processAction: 'answer_e3_specific_question',
+      conversationalBehavior: 'answer_only_the_specific_e3_question_with_authorized_facts_then_check_interest_naturally',
+      allowedIntent: 'answer_specific_e3_question_without_representing_full_presentation_or_advancing_stage',
+      speakableFacts: {
+        ...(stageContract.speakableFacts || {}),
+        pending_criterion_before: pendingCriterionBefore,
+        pending_criterion_after: pendingCriterionAfter,
+        e3_specific_question: latestUserMessage,
+      },
+    };
+  }
   out.pendingCriterionBefore = pendingCriterionBefore || null;
   out.pendingCriterionAfter = pendingCriterionAfter || null;
   out.allowedIntent = stabilizedStageContract.allowedIntent;
   out.processAction = stabilizedStageContract.processAction;
   out.conversationalBehavior = stabilizedStageContract.conversationalBehavior;
   out.speakableFacts = stabilizedStageContract.speakableFacts;
+  if (authorizedFactsForStage.length > 0) {
+    out.speakableFacts = {
+      ...(out.speakableFacts || {}),
+      authorized_facts: authorizedFactsForStage,
+      authorized_claim_keys: authorizedFactsForStage.map((fact: any) => fact.claim_key).filter(Boolean),
+    };
+    messages.push({
+      role: 'system',
+      content: [
+        'FACTS AUTORIZADOS PARA ESTE TURNO',
+        '- Use somente estes registros como claims comerciais/acadêmicos verbalizáveis.',
+        `- AUTHORIZED_FACTS: ${JSON.stringify(authorizedFactsForStage)}.`,
+        '- Se um claim desejado nao estiver nessa lista, nao verbalize nem crie substituto.',
+      ].join('\n'),
+    });
+  }
   out.personalityPromptId = personalityPromptId;
   out.stagePromptId = stagePromptId;
   if (false && (
@@ -1619,6 +1737,10 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     }
     : null;
   const effectiveCatalogIntent = catalogAreaSelectionIntent || catalogCourseSelectionIntent || fallbackBrowseIntent || catalogIntent;
+  const broadCatalogRequest = input.etapaAtual === 'E1'
+    && allowFreshIntentParsing
+    && !stageState.matched
+    && looksLikeBroadCatalogRequest(latestUserMessage);
   const greetingOnlyFollowup = looksLikePureGreeting(latestUserMessage);
   const canUseCourseLookupInStage = ['E1', 'E3'].includes(input.etapaAtual);
   const shouldUseCurrentCourseContext = canUseCourseLookupInStage
@@ -1628,6 +1750,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     && !effectiveCatalogIntent.matched;
   const mustConsultCourseBeforeReply = canUseCourseLookupInStage
     && !contextualReplyKind && effectiveCatalogIntent.matched
+    && !broadCatalogRequest
     && !greetingOnlyFollowup
     && ['specific', 'specific_or_related', 'browse', 'browse_area', 'browse_filter', 'browse_catalog'].includes(String(effectiveCatalogIntent.mode || ''));
 
@@ -1680,6 +1803,118 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     });
   }
 
+  if (
+    input.etapaAtual === 'E2'
+    && stageState.classificationReason === 'resolved_pending_vaccine_2'
+    && pendingCriterionAfter === 'vaccine_agreement'
+  ) {
+    const participant = String(stageState.statePatch?.e2_decision_participant || currentSalesContext.e2_decision_participant || '').trim();
+    const solo = /sozinh|eu mesmo|eu mesma|so eu/.test(normalizeIntentText(participant || latestUserMessage));
+    if (!solo) {
+      out.conversationalBehavior = 'acknowledge_third_party_decider_open_space_for_their_questions_then_ask_commercial_agreement';
+      out.allowedIntent = 'acknowledge_decision_participant_then_ask_if_presentation_and_scholarship_make_sense_we_go_to_enrollment';
+      messages.push({
+        role: 'system',
+        content: [
+          'VACINA 2 COM TERCEIRO ENVOLVIDO',
+          `- Pessoa citada na decisao: ${participant || latestUserMessage}.`,
+          '- Reaja brevemente de forma humana.',
+          '- Abra espaco para duvidas dessa pessoa de forma natural.',
+          '- No mesmo turno, faca a vacina 3: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.',
+          '- Nao pergunte novamente se o lead decide sozinho ou conversa com alguem.',
+          '- A PERSONALITY escreve; nao use frase fixa.',
+        ].join('\n'),
+      });
+    }
+  }
+
+  if (broadCatalogRequest) {
+    out.pendingCriterionBefore = pendingCriterionBefore || 'course';
+    out.pendingCriterionAfter = 'catalog_area_selection';
+    out.allowedIntent = 'explain_many_courses_and_ask_area_to_be_assertive';
+    out.processAction = 'ask_catalog_area';
+    out.conversationalBehavior = 'human_explanation_before_area_question';
+    out.speakableFacts = {
+      ...(out.speakableFacts || {}),
+      course_status: 'catalog_exploration',
+      pending_criterion_before: pendingCriterionBefore || 'course',
+      pending_criterion_after: 'catalog_area_selection',
+    };
+    messages.push({
+      role: 'system',
+      content: [
+        'EXPLORACAO AMPLA DE CATALOGO',
+        '- O lead pediu para conhecer cursos/opcoes/graduações em geral.',
+        '- Nao consulte nem liste cursos ainda.',
+        '- Explique brevemente que existem muitas opcoes de graduacao.',
+        '- Diga que perguntar a area ajuda a ser mais assertivo e evita mandar lista enorme.',
+        '- Pergunte somente com qual area o lead mais se identifica.',
+        '- A PERSONALITY deve escrever a resposta; nao copie template fixo.',
+      ].join('\n'),
+    });
+  }
+
+  if (
+    input.etapaAtual === 'E3'
+    && stageState.classificationReason === 'resolved_pending_e3_interest_signal'
+    && pendingCriterionAfter === null
+  ) {
+    messages.push({
+      role: 'system',
+      content: [
+        'E3 CONCLUIDA NESTE TURNO',
+        '- A apresentacao da E3 ja foi enviada antes.',
+        '- A ultima mensagem do lead indica que podemos seguir para valores/proposta.',
+        '- Nao reapresente instituicao, curso, modalidade, duracao, tutoria ou claims.',
+        '- Nao faca nova pergunta da E3.',
+        '- Use no maximo uma ponte curta e humana; a estrutura fara o handoff para E4.',
+      ].join('\n'),
+    });
+  }
+
+  if (input.etapaAtual === 'E7' && String(out.processAction || '') === 'prepare_referral_and_close') {
+    messages.push({
+      role: 'system',
+      content: [
+        'E7 COM INDICACAO JA REGISTRADA',
+        '- A indicacao ja foi registrada antes.',
+        '- Nao pergunte nome, telefone, curso, area ou cidade do indicado.',
+        '- Oriente o matriculado a avisar que alguem da instituicao pode entrar em contato com a pessoa indicada.',
+        '- Encerre de forma humana se nao houver mais duvidas.',
+        '- Nao reabra venda, nao requalifique e nao peca nova indicacao.',
+      ].join('\n'),
+    });
+  }
+
+  if (input.etapaAtual === 'E7' && String(out.processAction || '') === 'human_final_closing') {
+    messages.push({
+      role: 'system',
+      content: [
+        'E7 SEM INDICACAO PENDENTE',
+        '- Nao existe indicacao pendente para coletar neste turno.',
+        '- Nao pergunte telefone, nome, curso, area ou cidade.',
+        '- Nao fale em concluir matricula ou reabrir processo comercial.',
+        '- Se o lead nao tem duvidas, encerre de forma humana e breve.',
+      ].join('\n'),
+    });
+  }
+
+  if (e3SpecificQuestion) {
+    messages.push({
+      role: 'system',
+      content: [
+        'DUVIDA ESPECIFICA NA E3',
+        `- Pergunta do lead: ${latestUserMessage}.`,
+        '- Responda diretamente essa duvida com tom humano da PERSONALITY.',
+        '- Use somente fatos autorizados em SPEAKABLE_FACTS/AUTHORIZED_FACTS.',
+        '- Nao reapresente os tres blocos da E3.',
+        '- Nao trate como nova consulta de curso.',
+        '- Nao avance para E4 apenas por existir duvida.',
+        '- Depois de responder, cheque naturalmente se ficou alguma duvida ou se a pessoa quer ver os valores.',
+      ].join('\n'),
+    });
+  }
+
   messages.push({
     role: 'system',
     content: [
@@ -1694,10 +1929,10 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ['E1', 'E2'].includes(input.etapaAtual)
         ? '- Em E1 e E2, e proibido verbalizar modalidade, duracao, semestres, grade, metodologia, instituicao, suporte, preco, bolsa, desconto ou qualquer detalhe de produto. Excecao unica: E2 pode verbalizar modalidade confirmada quando PROCESS_ACTION tratar viagem/mudanca real.'
         : '- Verbalize apenas o que a etapa atual permite.',
-      `- PROCESS_ACTION: ${stabilizedStageContract.processAction}.`,
-      `- CONVERSATIONAL_BEHAVIOR: ${stabilizedStageContract.conversationalBehavior}.`,
-      `- ALLOWED_INTENT: ${stabilizedStageContract.allowedIntent}.`,
-      `- SPEAKABLE_FACTS: ${JSON.stringify(stabilizedStageContract.speakableFacts || {})}.`,
+      `- PROCESS_ACTION: ${out.processAction || stabilizedStageContract.processAction}.`,
+      `- CONVERSATIONAL_BEHAVIOR: ${out.conversationalBehavior || stabilizedStageContract.conversationalBehavior}.`,
+      `- ALLOWED_INTENT: ${out.allowedIntent || stabilizedStageContract.allowedIntent}.`,
+      `- SPEAKABLE_FACTS: ${JSON.stringify(out.speakableFacts || stabilizedStageContract.speakableFacts || {})}.`,
       '- A estrutura define O QUE precisa acontecer.',
       '- A PERSONALITY define COMO isso entra naturalmente na conversa.',
       '- Nao reduza a resposta a uma pergunta seca se houver espaco para reacao contextual breve e proporcional.',
@@ -1726,6 +1961,14 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       extraEditorialRules.push('- Proibido verbalizar Bacharelado, Licenciatura ou outra linha unica interna nesta resposta.');
       extraEditorialRules.push('- Mencione apenas o nome comercial do curso.');
     }
+    if (forbiddenTopics.some((topic) => String(topic).includes('missing_course_line') || String(topic).includes('invalid_course_line') || String(topic).includes('placeholder_line'))) {
+      extraEditorialRules.push('- Curso ambiguo: liste TODAS e SOMENTE as linhas reais de `available_course_lines`.');
+      extraEditorialRules.push('- Proibido oferecer cursos alternativos ou perguntar cidade antes da escolha da linha.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('technical_course_name_leak'))) {
+      extraEditorialRules.push('- Proibido verbalizar nome tecnico bruto, sigla CST, ABI, EGRESSO ou a palavra Tecnologo.');
+      extraEditorialRules.push('- Use somente o nome comercial limpo do curso quando precisar citar o curso.');
+    }
     if (forbiddenTopics.some((topic) => String(topic).includes('ungrounded_output'))) {
       extraEditorialRules.push('- Proibido mencionar area, segmento, cursos relacionados, alternativas proximas ou qualquer classificacao inferida.');
       extraEditorialRules.push('- Use somente os fatos explicitamente presentes em speakable_facts.');
@@ -1742,12 +1985,31 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       extraEditorialRules.push('- Se houver requested_area e related_area_courses, conduza para alternativas reais da mesma linha.');
       extraEditorialRules.push('- Se nao houver segmento confiavel, peca nova direcao de forma leve e comercial.');
     }
+    if (forbiddenTopics.some((topic) => String(topic).includes('missing_third_party_decider_acknowledgement'))) {
+      extraEditorialRules.push('- Vacina 2 com terceiro: reconheca a pessoa citada pelo lead e abra espaco para duvidas dela.');
+      extraEditorialRules.push('- Depois faca a vacina 3 no mesmo turno, sem repetir pergunta sobre quem decide.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('question_mismatch:ask_vaccine_agreement') || String(topic).includes('repeated_resolved_criterion:vaccine_decider'))) {
+      extraEditorialRules.push('- A acao permitida agora e a Vacina 3/combinado.');
+      extraEditorialRules.push('- Proibido repetir pergunta sobre decidir sozinho ou conversar com alguem.');
+      extraEditorialRules.push('- A resposta precisa combinar: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.');
+    }
     if (forbiddenTopics.some((topic) => String(topic).includes('segment_unavailable_inferred_area'))) {
       extraEditorialRules.push('- Sem segmento confiavel: proibido mencionar fisica, ciencias exatas, area relacionada, curso relacionado, alternativas proximas ou segmento parecido.');
       extraEditorialRules.push('- Diga somente que essa graduacao especifica nao esta disponivel por aqui e pergunte qual outra graduacao ou area a pessoa considera.');
     }
+    if (forbiddenTopics.some((topic) => String(topic).includes('e7_final_closing_reopened_process'))) {
+      extraEditorialRules.push('- E7 final: proibido pedir telefone, curso, area ou cidade.');
+      extraEditorialRules.push('- Proibido falar em concluir matricula ou seguir processo.');
+      extraEditorialRules.push('- Encerramento humano, curto, sem nova pergunta operacional.');
+    }
     if (forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact:instituicao') || String(topic).includes('unauthorized_stage_fact:institui'))) {
       extraEditorialRules.push('- Proibido mencionar instituicao, universidade ou "aqui na instituicao" nesta resposta.');
+    }
+    if (input.etapaAtual === 'E3' && forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact'))) {
+      extraEditorialRules.push('- E3: use SOMENTE `e3_authorized_facts` dentro de speakable_facts para claims institucionais, suporte e modalidade.');
+      extraEditorialRules.push('- Claims comerciais so podem aparecer se a claim_key correspondente existir em `e3_authorized_claim_keys`.');
+      extraEditorialRules.push('- Se uma claim_key nao existir, nao crie substituto nem force frase parecida.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact:early_stage_course_details'))) {
       extraEditorialRules.push('- Proibido apresentar produto, detalhes do curso ou qualquer informacao editorial fora do que a etapa permite.');
