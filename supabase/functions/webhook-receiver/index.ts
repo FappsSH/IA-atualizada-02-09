@@ -16,7 +16,7 @@ import {
 } from '../_shared/evolution-api.ts';
 import { transcribeAudio } from '../_shared/openai-client.ts';
 import { loadTenantRuntimeConfig, resolveEdgeReachableUrl } from '../_shared/runtime-config.ts';
-import { completeAdminCheckpointByReply, getPendingAdminCheckpoint, isAuthorizedAdminPhone } from '../_shared/admin-checkpoints.ts';
+import { completeAdminCheckpointByReply, completeSinglePendingProposalByAdminConfirmation, getPendingAdminCheckpoint, isAuthorizedAdminPhone } from '../_shared/admin-checkpoints.ts';
 import { resolveTrustedLeadName } from '../_shared/lead-name.ts';
 
 const TENANT_ID = Deno.env.get('TENANT_ID') ?? '00000000-0000-0000-0000-000000000001';
@@ -411,7 +411,7 @@ async function triggerEdgeFunction(functionName: string) {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (!supabaseUrl || !serviceRoleKey) {
         console.warn(`[webhook-receiver] nao foi possivel disparar ${functionName}: SUPABASE_URL/SERVICE_ROLE_KEY ausentes`);
-        return;
+        return false;
     }
 
     const res = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
@@ -430,6 +430,7 @@ async function triggerEdgeFunction(functionName: string) {
         const err = await res.text().catch(() => '');
         console.warn(`[webhook-receiver] disparo de ${functionName} retornou ${res.status}: ${err}`);
     }
+    return !!res?.ok;
 }
 
 serve(async (req) => {
@@ -693,27 +694,21 @@ serve(async (req) => {
         const isAdminMessage = isAuthorizedAdminPhone(telefone, runtimeConfig.adminPhone || '');
 
         if (isAdminMessage) {
-            if (!replyToMessageId) {
-                await logAdminRuntimeEvent(supabase, {
+            const completion = await (replyToMessageId
+                ? completeAdminCheckpointByReply({
+                    supabase,
                     tenantId: TENANT_ID,
-                    adminPhone: telefone,
-                    eventType: 'admin_reply_uncorrelated',
-                    data: {
-                        texto: text,
-                        inbound_message_id: inboundMessageId || null,
-                        reason: 'missing_reply_reference',
-                        logged_at: new Date().toISOString(),
-                    },
-                }).catch(() => {});
-                continue;
-            }
-
-            const completion = await completeAdminCheckpointByReply({
-                supabase,
-                tenantId: TENANT_ID,
-                adminReplyToMessageId: replyToMessageId,
-                adminPhoneOrId: telefone,
-            }).catch((error) => {
+                    adminReplyToMessageId: replyToMessageId,
+                    adminPhoneOrId: telefone,
+                    text,
+                })
+                : completeSinglePendingProposalByAdminConfirmation({
+                    supabase,
+                    tenantId: TENANT_ID,
+                    adminPhoneOrId: telefone,
+                    text,
+                })
+            ).catch((error) => {
                 console.error('[webhook-receiver] falha ao concluir checkpoint administrativo', String(error));
                 return { ok: false, reason: 'checkpoint_completion_error' };
             });
@@ -734,6 +729,30 @@ serve(async (req) => {
                 continue;
             }
 
+            if (completion.checkpoint?.checkpoint_admin === 'proposal_send') {
+                const senderUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/whatsapp-sender`;
+                const acknowledgement = await fetch(senderUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                    },
+                    body: JSON.stringify({
+                        telefone: runtimeConfig.adminPhone,
+                        text: `Entendido. Vou retomar a conversa com ${completion.lead_name}.`,
+                        skip_governance: true,
+                        persist_message: false,
+                    }),
+                }).catch((error) => {
+                    console.error('[webhook-receiver] falha ao confirmar retomada para admin', String(error));
+                    return null;
+                });
+
+                if (!acknowledgement?.ok) {
+                    console.error('[webhook-receiver] confirmacao de retomada nao enviada ao admin');
+                }
+            }
+
             const snapshot = await buildFreshConversationSnapshot(supabase, completion.lead_id);
             await sendMessage(supabase, 'ai_processing_vendas', {
                 lead_id: completion.lead_id,
@@ -752,6 +771,7 @@ serve(async (req) => {
                 trigger: 'stage_handoff',
                 instance: body.instance,
             });
+            const processorTriggered = await triggerEdgeFunction('ai-processor');
 
             await logLeadRuntimeEvent({
                 supabase,
@@ -762,6 +782,7 @@ serve(async (req) => {
                     checkpoint_admin: completion.checkpoint?.checkpoint_admin,
                     next_stage: completion.next_stage,
                     reply_to_message_id: replyToMessageId,
+                    processor_triggered: processorTriggered,
                     resumed_at: new Date().toISOString(),
                 },
             }).catch(() => {});

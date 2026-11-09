@@ -158,7 +158,7 @@ serve(async (req) => {
           timeZone: runtimeConfig.businessHours?.tz || 'America/Porto_Velho',
         });
 
-    const partes = skip_governance
+    const partes = skip_governance || etapaAtual === 'E3'
         ? [String(governedText || '').trim()].filter(Boolean)
         : splitForWhatsappDelivery(governedText, runtimeConfig.messagePolicy);
 

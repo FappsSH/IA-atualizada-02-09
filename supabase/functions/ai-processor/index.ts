@@ -18,6 +18,7 @@ import { validateOutboundText } from '../_shared/output-validator.ts';
 import { tool_avancar_etapa, tool_consultar_conhecimento, tool_registrar_indicacao, tool_registrar_matricula } from './tools.ts';
 import { detectCatalogIntentWithHistory, detectContextualReplyKind } from './catalog-resolver.ts';
 import { createAdminCheckpoint, getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
+import { resolveTrustedLeadName } from '../_shared/lead-name.ts';
 import { classifyInboundAgainstStageState, derivePendingCriterion, detectLastAgentQuestionType, getE2StateSnapshot, getNextCatalogAction, getNextE2Criterion, isE1CityResolved, matchOfferedCourseSelection } from './stage-state.ts';
 import { buildInitialE1WelcomeMessages, resolveInitialE1WelcomeMessageCount, shouldRunInitialE1Welcome } from './initial-opening.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
@@ -37,6 +38,161 @@ const MAX_QUEUE_SCAN = Number(Deno.env.get('AI_PROCESSOR_MAX_QUEUE_SCAN') || 8);
 const PROCESSING_STALE_MS = Number(Deno.env.get('AI_PROCESSOR_PROCESSING_STALE_MS') || 90_000);
 
 const PHONE_LIKE = /^\+?\d{10,15}$/;
+
+function pendingCriterionFromProcessAction(processAction: string | null | undefined) {
+    switch (String(processAction || '').trim()) {
+        case 'ask_city':
+            return 'city';
+        case 'ask_motivation':
+            return 'motivation';
+        case 'ask_course_line':
+            return 'course_line';
+        case 'present_real_areas_and_wait_selection':
+            return 'catalog_area_selection';
+        case 'present_area_courses_and_wait_selection':
+            return 'course_selection';
+        case 'present_segment_options_and_wait_selection':
+            return 'alternative_course_selection';
+        case 'ask_for_new_direction':
+            return 'new_direction';
+        case 'ask_vaccine_availability':
+            return 'vaccine_availability';
+        case 'ask_vaccine_decider':
+            return 'vaccine_decider';
+        case 'ask_vaccine_agreement':
+            return 'vaccine_agreement';
+        case 'complete_stage':
+            return null;
+        default:
+            return undefined;
+    }
+}
+
+function syncLatestAssistantArtifacts(params: {
+    collectedTexts: Array<{ stage: string; text: string }>;
+    workingHistory: Array<{ role?: string; content?: string }>;
+    currentSubagent: string;
+    text: string | undefined;
+}) {
+    if (!params.text) return;
+
+    const lastCollected = params.collectedTexts[params.collectedTexts.length - 1];
+    if (lastCollected && lastCollected.stage === params.currentSubagent) {
+        lastCollected.text = params.text;
+    }
+
+    for (let i = params.workingHistory.length - 1; i >= 0; i -= 1) {
+        if (params.workingHistory[i]?.role === 'assistant') {
+            params.workingHistory[i].content = params.text;
+            break;
+        }
+    }
+}
+
+function isE2AdvanceStructurallyValid(params: {
+    history: Array<{ role?: string; content?: string }>;
+    recentUserMessages: string[];
+    salesContext?: Record<string, unknown> | null;
+}) {
+    return getNextE2Criterion({
+        leadSnapshot: { sales_context: { ...(params.salesContext || {}) } },
+    }) === null;
+}
+
+function buildE2AgreementFallback() {
+    return 'Entao deixa eu combinar uma coisa com voce.\n\nVou te apresentar tudo direitinho e, se fizer sentido pra voce e a bolsa de estudos ficar boa tambem, seguimos para a inscricao e garantimos essa oportunidade. Combinado?';
+}
+
+function userAskedFinancialQuestion(message: string) {
+    const normalized = normalizeText(message);
+    return textIncludesAny(normalized, [
+        'qual o valor',
+        'qual valor',
+        'quanto custa',
+        'quanto fica',
+        'mensalidade',
+        'preco',
+        'parcela',
+        'bolsa',
+        'desconto',
+    ]);
+}
+
+function userExpressedCommercialInterest(message: string) {
+    const normalized = normalizeText(message);
+    return textIncludesAny(normalized, [
+        'gostei',
+        'faz sentido',
+        'quero fazer',
+        'e isso que procuro',
+        '� isso que procuro',
+        'parece bom',
+        'quero seguir',
+        'quero sim',
+        'tenho interesse',
+        'curti',
+        'nao tenho duvidas',
+        'n�o tenho d�vidas',
+        'sem duvidas',
+        'sem d�vidas',
+        'nenhuma duvida',
+        'nenhuma d�vida',
+    ]);
+}
+
+function userAskedToKnowValues(message: string) {
+    return userAskedFinancialQuestion(message);
+}
+
+function isE3AdvanceStructurallyValid(params: {
+    trigger: string;
+    recentUserMessages: string[];
+}) {
+    const latestReply = params.recentUserMessages.slice(-1)[0] || '';
+    if (params.trigger !== 'stage_handoff') return true;
+    return userAskedToKnowValues(latestReply) || userExpressedCommercialInterest(latestReply);
+}
+function isLocalDebugLlmTraceEnabled(env: Record<string, string | undefined>) {
+    const flag = String(env.DEBUG_LLM_TRACE || Deno.env.get('DEBUG_LLM_TRACE') || '').trim().toLowerCase() === 'true';
+    if (!flag) return false;
+    const url = String(
+        env.NEXT_PUBLIC_SUPABASE_URL
+        || env.SUPABASE_URL
+        || Deno.env.get('NEXT_PUBLIC_SUPABASE_URL')
+        || Deno.env.get('SUPABASE_URL')
+        || '',
+    ).trim();
+    return /^(https?:\/\/)?(127\.0\.0\.1|localhost|kong)(?::|\/|$)/i.test(url) || url.includes('supabase_edge_runtime');
+}
+
+function isLocalRuntimeUrl(env: Record<string, string | undefined>) {
+    const url = String(env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL || '').trim();
+    return /^(https?:\/\/)?(127\.0\.0\.1|localhost|kong)(?::|\/|$)/i.test(url);
+}
+
+function sanitizeDebugLlmTraceValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (Array.isArray(value)) return value.map((item) => sanitizeDebugLlmTraceValue(item));
+    if (typeof value === 'object') {
+        const result: Record<string, unknown> = {};
+        for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+            if (/(api[_-]?key|token|authorization|password|secret|service[_-]?role|bearer|cookie)/i.test(key)) {
+                result[key] = '[REDACTED]';
+            } else {
+                result[key] = sanitizeDebugLlmTraceValue(rawValue);
+            }
+        }
+        return result;
+    }
+    return value;
+}
+
+function emitDebugLlmTrace(env: Record<string, string | undefined>, payload: Record<string, unknown>) {
+    if (!isLocalDebugLlmTraceEnabled(env)) return;
+    console.log('[DEBUG_LLM_TRACE:START]');
+    console.log(JSON.stringify(sanitizeDebugLlmTraceValue(payload), null, 2));
+    console.log('[DEBUG_LLM_TRACE:END]');
+}
 
 function joinAssistantTexts(parts: Array<string | undefined>) {
     return uniqueNormalizedParts(parts
@@ -69,6 +225,12 @@ function normalizeText(text: string) {
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+function textMisframesAreaSelectionAsUnavailable(text: string | undefined) {
+    const normalized = normalizeText(String(text || ''));
+    return /(nao temos|nao oferecemos|nao esta disponivel|curso indisponivel).{0,40}(curso|graduacao)/.test(normalized)
+        || /(curso|graduacao).{0,40}(nao temos|nao oferecemos|nao esta disponivel|indisponivel)/.test(normalized);
 }
 
 function textIncludesAny(text: string, patterns: string[]) {
@@ -189,65 +351,6 @@ async function classifyQueueJob(params: {
     };
 }
 
-function hasE1MotivationSignal(history: Array<{ role?: string; content?: string }>, recentUserMessages: string[]) {
-    const corpus = normalizeText(
-        [
-            ...history
-                .filter((item) => item?.role === 'user')
-                .map((item) => item?.content || ''),
-            ...recentUserMessages,
-        ].join(' \n '),
-    );
-
-    return textIncludesAny(corpus, [
-        'ja trabalho',
-        'trabalho na area',
-        'trabalho nessa area',
-        'atuo na area',
-        'sempre quis',
-        'sempre quiz',
-        'quero fazer',
-        'quero cursar',
-        'tenho esse sonho',
-        'tenho esse objetivo',
-        'e meu objetivo',
-        'me identifico com a area',
-        'gosto da area',
-        'sonho meu',
-        'sou enfermeiro',
-        'sou tecnico',
-        'recebi uma oportunidade',
-        'quero migrar',
-        'quero mudar de area',
-        'sempre foi um sonho',
-        'e um sonho',
-        'meu sonho',
-        'objetivo pessoal',
-        'objetivo profissional',
-        'quero realizar',
-        'quero crescer',
-        'quero evoluir',
-        'busco uma oportunidade',
-    ]);
-}
-
-function assistantAskedE1MotivationQuestion(history: Array<{ role?: string; content?: string }>) {
-    const lastAssistant = [...history]
-        .reverse()
-        .find((item) => item?.role === 'assistant')?.content || '';
-    const normalized = normalizeText(lastAssistant);
-
-    return textIncludesAny(normalized, [
-        'ja trabalha na area',
-        'trabalha na area',
-        'esse curso representa um sonho',
-        'esse curso e mais um sonho',
-        'objetivo pessoal',
-        'objetivo profissional',
-        'sempre foi um sonho',
-    ]);
-}
-
 function extractLikelyE1CourseQuery(message: string) {
     const normalized = normalizeText(message);
     if (!normalized) return '';
@@ -283,20 +386,6 @@ function extractLikelyE1CourseQuery(message: string) {
     if (!cleaned || words.length < 1 || words.length > 6) return '';
     if (blocked.has(cleanedNormalized)) return '';
     return cleaned;
-}
-
-function lastLeadReplyCanCloseE1(recentUserMessages: string[]) {
-    const lastReply = normalizeText(recentUserMessages.slice(-1)[0] || '');
-    if (!lastReply) return false;
-
-    return lastReply.length >= 6 || textIncludesAny(lastReply, [
-        'sim',
-        'sempre quis',
-        'sempre quiz',
-        'e um sonho',
-        'meu sonho',
-        'objetivo',
-    ]);
 }
 
 function looksLikeE1ClosingValidation(text: string) {
@@ -458,7 +547,7 @@ async function applyPersonalityOutputGuard(params: {
         vaccine_agreement: 'ask_vaccine_agreement',
     };
 
-    const maxRegenerations = 2;
+    const maxRegenerations = 4;
     let attempts = 0;
     let lastResult = {
         guardTriggered: false,
@@ -475,7 +564,16 @@ async function applyPersonalityOutputGuard(params: {
         const liveLeadSnapshot = liveLead.data || params.leadSnapshot || {};
         const liveSalesContext = { ...(liveLeadSnapshot?.sales_context || {}) } as Record<string, unknown>;
         const contextualReplyKind = detectContextualReplyKind(params.activeLastUserMessage, params.workingHistory);
-        const pendingCriterion = String(params.stageOutput.pendingCriterionAfter || liveSalesContext.pending_criterion || '').trim() || null;
+        const configuredPendingCriterion = String(params.currentSubagent === 'E1' && params.stageOutput.pendingCriterionAfter !== undefined
+            ? (params.stageOutput.pendingCriterionAfter ?? '') : (params.stageOutput.pendingCriterionAfter || liveSalesContext.pending_criterion || '')).trim() || null;
+        const e1CityQuestionLocked = params.currentSubagent === 'E1'
+            && String(liveSalesContext.course_status || '').trim() === 'confirmed_available'
+            && !isE1CityResolved(liveLeadSnapshot)
+            && (
+                String(params.stageOutput.processAction || '').trim() === 'ask_city'
+                || asksE1CityQuestion(params.stageOutput.text)
+            );
+        const pendingCriterion = e1CityQuestionLocked ? 'city' : configuredPendingCriterion;
         const effectiveProcessAction = processActionByPending[pendingCriterion || '']
             || (
                 String(params.stageOutput.processAction || '').trim()
@@ -503,6 +601,8 @@ async function applyPersonalityOutputGuard(params: {
                 : Array.isArray(params.stageOutput.speakableFacts?.e3_authorized_facts)
                     ? params.stageOutput.speakableFacts.e3_authorized_facts.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean)
                     : [],
+            e2AvailabilityObjectionKind: String(liveSalesContext.e2_availability_objection_kind || '').trim() || null,
+            leadMotivation: String(liveSalesContext.motivacao_principal || params.leadSnapshot?.dor_principal || '').trim() || null,
         });
 
         params.stageOutput.personalityGuardTriggered = guard.personality_guard_triggered === true;
@@ -540,6 +640,10 @@ async function applyPersonalityOutputGuard(params: {
             return lastResult;
         }
 
+        if (attempts >= maxRegenerations) {
+            break;
+        }
+
         attempts += 1;
         params.stageOutput.regenerationAttempt = attempts;
 
@@ -556,7 +660,22 @@ async function applyPersonalityOutputGuard(params: {
             pending_criterion: pendingCriterion,
             pending_criterion_before: params.stageOutput.pendingCriterionBefore || pendingCriterion,
             pending_criterion_after: pendingCriterion,
+            e2_availability_answer: String(liveSalesContext.e2_vaccine_availability_answer || '').trim() || null,
+            e2_availability_objection_kind: String(liveSalesContext.e2_availability_objection_kind || '').trim() || null,
+            lead_motivation: String(liveSalesContext.motivacao_principal || params.leadSnapshot?.dor_principal || '').trim() || null,
+            ...(params.currentSubagent === 'E1' || params.currentSubagent === 'E3' ? params.stageOutput.speakableFacts : {}),
         };
+        if (
+            params.currentSubagent === 'E1'
+            && String(liveSalesContext.course_status || '').trim() === 'confirmed_available'
+            && effectiveProcessAction === 'ask_city'
+        ) {
+            delete speakableFacts.course_status;
+            delete speakableFacts.available_course_lines;
+            delete speakableFacts.availability;
+            delete speakableFacts.offered;
+            speakableFacts.e1_behavior = 'selected_course_to_city';
+        }
 
         const regeneratedOutput = await runSubagent({
             subagent: params.currentSubagent as any,
@@ -575,17 +694,7 @@ async function applyPersonalityOutputGuard(params: {
             intelligence: params.intelligence,
             leadSnapshot: liveLeadSnapshot,
             regenerationContext: {
-                allowedIntent: (
-                    effectiveProcessAction === 'ask_city' ? 'confirm_course_available_and_ask_city'
-                        : effectiveProcessAction === 'ask_motivation' ? 'confirm_course_available_and_ask_motivation'
-                            : effectiveProcessAction === 'ask_course_line' ? 'confirm_course_exists_and_ask_only_for_real_available_line_choice'
-                                : effectiveProcessAction === 'present_segment_options_and_wait_selection' ? 'present_same_segment_alternatives_and_wait_for_specific_course_choice'
-                                    : effectiveProcessAction === 'ask_for_new_direction' ? 'explain_unavailable_course_without_known_segment_and_ask_for_new_direction'
-                                        : effectiveProcessAction === 'ask_vaccine_availability' ? 'natural_transition_and_ask_vaccine_availability'
-                                            : effectiveProcessAction === 'ask_vaccine_decider' ? 'natural_transition_and_ask_vaccine_decider'
-                                                : effectiveProcessAction === 'ask_vaccine_agreement' ? 'natural_transition_and_ask_vaccine_agreement'
-                                                    : params.stageOutput.allowedIntent || 'follow_stage_prompt_normally'
-                ),
+                allowedIntent: params.stageOutput.allowedIntent || effectiveProcessAction || 'follow_stage_prompt_normally',
                 speakableFacts,
                 forbiddenTopics: guard.personality_violations || [],
                 originalOutput: params.stageOutput.text,
@@ -595,6 +704,15 @@ async function applyPersonalityOutputGuard(params: {
         const originalTextBeforeRegeneration = params.stageOutput.text || '';
         params.stageOutput.originalOutput = params.stageOutput.originalOutput || originalTextBeforeRegeneration || null;
         let regeneratedText = regeneratedOutput.text || null;
+        const preserveConfirmedE3Presentation =
+            params.currentSubagent === 'E3'
+            && effectiveProcessAction === 'present_e3_structured_blocks'
+            && String(liveSalesContext.course_status || '').trim() === 'confirmed_available'
+            && [3, 4].includes(splitValidatedE3Blocks(originalTextBeforeRegeneration).length)
+            && /(curso nao esta disponivel|nao temos esse curso|nao oferecemos esse curso|curso indisponivel)/.test(normalizeText(regeneratedText || ''));
+        if (preserveConfirmedE3Presentation) {
+            regeneratedText = originalTextBeforeRegeneration;
+        }
         if (
             params.currentSubagent === 'E2'
             && effectiveProcessAction === 'ask_vaccine_agreement'
@@ -620,6 +738,7 @@ async function applyPersonalityOutputGuard(params: {
         params.stageOutput.pendingCriterionAfter = regeneratedOutput.pendingCriterionAfter || params.stageOutput.pendingCriterionAfter || null;
         params.stageOutput.personalityPromptId = regeneratedOutput.personalityPromptId || params.stageOutput.personalityPromptId || null;
         params.stageOutput.stagePromptId = regeneratedOutput.stagePromptId || params.stageOutput.stagePromptId || null;
+        params.stageOutput.regenerationLlmTrace = regeneratedOutput.llmTrace || null;
         params.stageOutput.personalityViolations = guard.personality_violations || [];
         params.stageOutput.stageContractViolation = params.stageOutput.stageContractViolation === true || guard.personality_violations.length > 0;
         params.stageOutput.finalOutputSource = regeneratedText ? `regenerated_${attempts}` : 'safe_failure';
@@ -766,6 +885,20 @@ export function buildE1AskCityFallback(course: string) {
     return `${courseLabel} faz bastante sentido para muita gente que busca esse caminho.\n\nMe diz só de qual cidade você fala?`;
 }
 
+function buildAreaCourseSelectionFallback(params: { requestedArea: string; courses: unknown[] }) {
+    const area = String(params.requestedArea || '').trim();
+    const courses = Array.from(new Set((params.courses || [])
+        .map((course) => getCourseDisplayName(String(course || '').trim()) || String(course || '').trim())
+        .filter(Boolean)));
+    if (!area || courses.length === 0) return '';
+    return [
+        `Encontrei algumas opcoes dentro de ${area} que podem combinar com o que voce procura.`,
+        `*${area}*`,
+        courses.map((course) => `- ${course}`).join('\n'),
+        'Qual delas mais faz sentido para voce?',
+    ].join('\n\n');
+}
+
 function buildE1CourseLineFallback(course: string, availableLines: unknown[]) {
     const courseLabel = getCourseDisplayName(String(course || '').trim()) || String(course || 'esse curso').trim();
     const lines = (availableLines || [])
@@ -793,24 +926,6 @@ function buildE2DecisionFallback() {
     return 'Perfeito.\n\nNuma decisão como essa, você costuma decidir sozinho ou conversa com alguém antes?';
 }
 
-function buildE2TravelMoveDecisionFallback(modality: unknown) {
-    const normalizedModality = normalizeText(String(modality || ''));
-    if (normalizedModality === 'ead') {
-        return 'Entendi.\n\nComo seu curso é EAD, isso ajuda bastante, porque você consegue organizar os estudos nos melhores dias e horários para sua rotina, respeitando as datas da plataforma.\n\nE nessa decisão, você costuma decidir sozinho ou conversa com alguém antes?';
-    }
-
-    return 'Entendi.\n\nComo seu curso é semipresencial, o ponto principal é você conseguir acompanhar a parte online pela plataforma e se organizar para os momentos presenciais quando houver.\n\nE nessa decisão, você costuma decidir sozinho ou conversa com alguém antes?';
-}
-
-function e2TravelMoveOutputMatchesModality(text: string | undefined, modality: unknown) {
-    const normalized = normalizeText(text || '');
-    const normalizedModality = normalizeText(String(modality || ''));
-    if (!normalized) return false;
-    if (normalizedModality === 'ead') {
-        return textIncludesAny(normalized, ['ead', 'dia', 'horario', 'horário', 'datas']);
-    }
-    return textIncludesAny(normalized, ['semipresencial', 'plataforma', 'aulas ao vivo']);
-}
 
 function detectLineFormationReply(history: Array<{ role?: string; content?: string }>, latestUserMessage: string) {
     const lastAssistant = [...(history || [])]
@@ -949,353 +1064,11 @@ function extractModelCompletionAcknowledgement(text: string | undefined) {
 }
 
 function splitValidatedE3Blocks(text: string | undefined) {
-    const blocks = String(text || '').split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
-    if (blocks.length < 3) return [String(text || '').trim()].filter(Boolean);
-    const courseIndex = blocks.findIndex((block) => normalizeText(block).startsWith('sobre '));
-    const closingIndex = blocks.findIndex((block) => normalizeText(block).includes('tem algum em especifico que ficou com duvida'));
-    if (courseIndex <= 0 || closingIndex <= courseIndex) return [String(text || '').trim()].filter(Boolean);
-    return [
-        blocks.slice(0, courseIndex).join('\n\n'),
-        blocks.slice(courseIndex, closingIndex).join('\n\n'),
-        blocks.slice(closingIndex).join('\n\n'),
-    ].map((part) => part.trim()).filter(Boolean);
-}
-
-function buildAreaCourseSelectionFallback(params: {
-    requestedArea: string | null;
-    courses: string[];
-}) {
-    const requestedArea = String(params.requestedArea || '').trim() || 'essa area';
-    const lines = params.courses
-        .filter(Boolean)
-        .map((course) => getCourseDisplayName(String(course)))
-        .filter(Boolean)
-        .map((course) => `- ${course}`);
-    return [
-        `Na area de ${requestedArea}, temos algumas opcoes bem interessantes:`,
-        lines.join('\n'),
-        'Qual desses cursos mais te interessa?',
-    ].filter(Boolean).join('\n\n');
-}
-
-function textMisframesAreaSelectionAsUnavailable(text: string | undefined) {
-    const normalized = normalizeText(text || '');
-    if (!normalized) return false;
-    const preservesOpportunity = textIncludesAny(normalized, [
-        'outras alternativas',
-        'outras opcoes',
-        'outras opÃ§Ãµes',
-        'podem ser interessantes',
-        'podem te interessar',
-    ]);
-    if (preservesOpportunity) return false;
-    return textIncludesAny(normalized, [
-        'infelizmente',
-        'nao temos',
-        'não temos',
-        'nao esta entre as opcoes',
-        'não está entre as opções',
-        'graduacao que voce mencionou nao esta',
-        'graduação que você mencionou não está',
-    ]);
-}
-
-function pendingCriterionFromProcessAction(processAction: string | null | undefined) {
-    switch (String(processAction || '').trim()) {
-        case 'ask_city':
-            return 'city';
-        case 'ask_motivation':
-            return 'motivation';
-        case 'ask_course_line':
-            return 'course_line';
-        case 'present_real_areas_and_wait_selection':
-            return 'catalog_area_selection';
-        case 'present_area_courses_and_wait_selection':
-            return 'course_selection';
-        case 'present_segment_options_and_wait_selection':
-            return 'alternative_course_selection';
-        case 'ask_for_new_direction':
-            return 'new_direction';
-        case 'ask_vaccine_availability':
-            return 'vaccine_availability';
-        case 'ask_vaccine_decider':
-            return 'vaccine_decider';
-        case 'ask_vaccine_agreement':
-            return 'vaccine_agreement';
-        case 'complete_stage':
-            return null;
-        default:
-            return undefined;
-    }
-}
-
-function syncLatestAssistantArtifacts(params: {
-    collectedTexts: Array<{ stage: string; text: string }>;
-    workingHistory: Array<{ role?: string; content?: string }>;
-    currentSubagent: string;
-    text: string | undefined;
-}) {
-    if (!params.text) return;
-
-    const lastCollected = params.collectedTexts[params.collectedTexts.length - 1];
-    if (lastCollected && lastCollected.stage === params.currentSubagent) {
-        lastCollected.text = params.text;
-    }
-
-    for (let i = params.workingHistory.length - 1; i >= 0; i -= 1) {
-        if (params.workingHistory[i]?.role === 'assistant') {
-            params.workingHistory[i].content = params.text;
-            break;
-        }
-    }
-}
-
-function assistantAskedE2AgreementQuestion(history: Array<{ role?: string; content?: string }>) {
-    const normalized = normalizeText(latestAssistantMessage(history));
-    return textIncludesAny(normalized, [
-        'vou te apresentar tudo direitinho',
-        'bolsa de estudos ficar boa',
-        'seguimos para a inscricao',
-        'garantimos essa oportunidade',
-        'combinado',
-    ]);
-}
-
-function assistantAskedE2AvailabilityQuestion(history: Array<{ role?: string; content?: string }>) {
-    const normalized = normalizeText(latestAssistantMessage(history));
-    return textIncludesAny(normalized, [
-        'alguma viagem mais longa',
-        'alguma viagem',
-        'mudanca ja planejada',
-        'mudança já planejada',
-        'possa interferir no inicio da graduacao',
-        'possa interferir no início da graduação',
-    ]);
-}
-
-function assistantAskedE2DecisionQuestion(history: Array<{ role?: string; content?: string }>) {
-    const normalized = normalizeText(latestAssistantMessage(history));
-    return textIncludesAny(normalized, [
-        'normalmente decide por voce mesmo',
-        'normalmente decide por você mesmo',
-        'costuma conversar com alguem antes',
-        'costuma conversar com alguém antes',
-        'decisao importante assim sobre seus estudos',
-        'decisão importante assim sobre seus estudos',
-    ]);
-}
-
-function hasReplyAfterLastAssistantQuestion(history: Array<{ role?: string; content?: string }>, patterns: string[]) {
-    const lastIndex = [...(history || [])]
-        .map((item, index) => ({ item, index }))
-        .filter((entry) => entry.item?.role === 'assistant' && textIncludesAny(normalizeText(entry.item?.content || ''), patterns))
-        .slice(-1)[0]?.index;
-
-    if (lastIndex === undefined) return false;
-    return (history || []).slice(lastIndex + 1).some((item) => item?.role === 'user' && String(item?.content || '').trim());
-}
-
-function leadAcceptedE2Agreement(recentUserMessages: string[]) {
-    const normalized = normalizeText(recentUserMessages.slice(-1)[0] || '');
-    if (!normalized) return false;
-
-    return textIncludesAny(normalized, [
-        'combinado',
-        'sim',
-        'se a bolsa ficar boa',
-        'dependendo do valor',
-        'se couber no meu bolso',
-        'seguimos sim',
-        'fechado',
-        'pode ser',
-    ]);
-}
-
-function isE2AdvanceStructurallyValid(params: {
-    history: Array<{ role?: string; content?: string }>;
-    recentUserMessages: string[];
-    salesContext?: Record<string, unknown> | null;
-}) {
-    return getNextE2Criterion({
-        leadSnapshot: { sales_context: { ...(params.salesContext || {}) } },
-    }) === null;
-
-    const salesContext = { ...(params.salesContext || {}) } as Record<string, unknown>;
-    const persistedVaccinesDone =
-        salesContext.e2_vaccine_availability_done === true
-        && salesContext.e2_vaccine_decider_done === true
-        && salesContext.e2_vaccine_agreement_done === true;
-    if (persistedVaccinesDone) return true;
-
-    const availabilityDone = hasReplyAfterLastAssistantQuestion(params.history, [
-        'alguma viagem mais longa',
-        'alguma viagem',
-        'mudanca ja planejada',
-        'mudança já planejada',
-        'possa interferir no inicio da graduacao',
-        'possa interferir no início da graduação',
-    ]);
-
-    const decisionDone = hasReplyAfterLastAssistantQuestion(params.history, [
-        'normalmente decide por voce mesmo',
-        'normalmente decide por você mesmo',
-        'costuma conversar com alguem antes',
-        'costuma conversar com alguém antes',
-        'decisao importante assim sobre seus estudos',
-        'decisão importante assim sobre seus estudos',
-    ]);
-
-    const agreementDone = assistantAskedE2AgreementQuestion(params.history)
-        && leadAcceptedE2Agreement(params.recentUserMessages);
-
-    return availabilityDone && decisionDone && agreementDone;
-}
-
-function buildE2AgreementFallback() {
-    return 'Entao deixa eu combinar uma coisa com voce.\n\nVou te apresentar tudo direitinho e, se fizer sentido pra voce e a bolsa de estudos ficar boa tambem, seguimos para a inscricao e garantimos essa oportunidade. Combinado?';
-}
-
-function buildDeterministicStageContractRecovery(params: {
-    stage: string;
-    pendingCriterion: string | null;
-    latestUserMessage: string;
-    leadSnapshot: Record<string, unknown> | null | undefined;
-}) {
-    const stage = String(params.stage || '').toUpperCase();
-    const leadSnapshot = params.leadSnapshot || {};
-    const salesContext = { ...(leadSnapshot.sales_context || {}) } as Record<string, unknown>;
-    const courseName = String(salesContext.course_display_name || leadSnapshot.curso_interesse || 'esse curso').trim();
-
-    if (stage === 'E1') {
-        if (params.pendingCriterion === 'city') {
-            return {
-                text: buildE1AskCityFallback(courseName),
-                processAction: 'ask_city',
-                allowedIntent: 'acknowledge_course_and_ask_city',
-                conversationalBehavior: 'acknowledge_course_or_line_choice_and_ask_city',
-                pendingBefore: 'course',
-                pendingAfter: 'city',
-            };
-        }
-        if (params.pendingCriterion === 'motivation') {
-            return {
-                text: buildE1AskMotivationFallback(courseName),
-                processAction: 'ask_motivation',
-                allowedIntent: 'acknowledge_course_and_ask_motivation',
-                conversationalBehavior: 'confirm_course_is_offered_if_relevant_and_make_a_natural_transition_without_sounding_like_checklist',
-                pendingBefore: 'city',
-                pendingAfter: 'motivation',
-            };
-        }
-        if (params.pendingCriterion === null) {
-            return {
-                text: buildE1CompletionFallback({
-                    latestUserMessage: params.latestUserMessage,
-                    courseName,
-                }),
-                processAction: 'complete_stage',
-                allowedIntent: 'complete_e1_and_handoff_to_e2',
-                conversationalBehavior: 'optional_short_contextual_acknowledgement',
-                pendingBefore: 'motivation',
-                pendingAfter: null,
-            };
-        }
-    }
-
-    if (stage === 'E2') {
-        if (params.pendingCriterion === 'vaccine_availability') {
-            return {
-                text: buildE2AvailabilityFallback(),
-                processAction: 'ask_vaccine_availability',
-                allowedIntent: 'ask_vaccine_availability',
-                conversationalBehavior: 'introduce_the_question_naturally',
-                pendingBefore: null,
-                pendingAfter: 'vaccine_availability',
-            };
-        }
-        if (params.pendingCriterion === 'vaccine_decider') {
-            return {
-                text: buildE2DecisionFallback(),
-                processAction: 'ask_vaccine_decider',
-                allowedIntent: 'ask_vaccine_decider',
-                conversationalBehavior: 'transition_naturally_without_sounding_mechanical',
-                pendingBefore: 'vaccine_availability',
-                pendingAfter: 'vaccine_decider',
-            };
-        }
-        if (params.pendingCriterion === 'vaccine_agreement') {
-            return {
-                text: buildE2AgreementFallback(),
-                processAction: 'ask_vaccine_agreement',
-                allowedIntent: 'ask_vaccine_agreement',
-                conversationalBehavior: 'transition_naturally_without_sounding_mechanical',
-                pendingBefore: 'vaccine_decider',
-                pendingAfter: 'vaccine_agreement',
-            };
-        }
-        if (params.pendingCriterion === null) {
-            return {
-                text: buildE2CompletionFallback(),
-                processAction: 'complete_stage',
-                allowedIntent: 'complete_e2_and_handoff_to_e3',
-                conversationalBehavior: 'optional_short_contextual_acknowledgement',
-                pendingBefore: 'vaccine_agreement',
-                pendingAfter: null,
-            };
-        }
-    }
-
-    return null;
-}
-
-function userAskedFinancialQuestion(message: string) {
-    const normalized = normalizeText(message);
-    return textIncludesAny(normalized, [
-        'qual o valor',
-        'qual valor',
-        'quanto custa',
-        'quanto fica',
-        'mensalidade',
-        'preco',
-        'parcela',
-        'bolsa',
-        'desconto',
-    ]);
-}
-
-function userExpressedCommercialInterest(message: string) {
-    const normalized = normalizeText(message);
-    return textIncludesAny(normalized, [
-        'gostei',
-        'faz sentido',
-        'quero fazer',
-        'e isso que procuro',
-        'é isso que procuro',
-        'parece bom',
-        'quero seguir',
-        'quero sim',
-        'tenho interesse',
-        'curti',
-        'nao tenho duvidas',
-        'não tenho dúvidas',
-        'sem duvidas',
-        'sem dúvidas',
-        'nenhuma duvida',
-        'nenhuma dúvida',
-    ]);
-}
-
-function userAskedToKnowValues(message: string) {
-    return userAskedFinancialQuestion(message);
-}
-
-function isE3AdvanceStructurallyValid(params: {
-    trigger: string;
-    recentUserMessages: string[];
-}) {
-    const latestReply = params.recentUserMessages.slice(-1)[0] || '';
-    if (params.trigger !== 'stage_handoff') return true;
-    return userAskedToKnowValues(latestReply) || userExpressedCommercialInterest(latestReply);
+    const blocks = String(text || '')
+        .split(/\n\s*---\s*\n/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+    return [3, 4].includes(blocks.length) ? blocks : [String(text || '').trim()].filter(Boolean);
 }
 
 function sanitizeBlockedE3AdvanceText(text: string | undefined) {
@@ -1354,8 +1127,9 @@ function looksLikePersonNameReply(message: string) {
     if (!normalized || normalized.length < 5) return false;
     if (looksLikePhoneReply(message)) return false;
 
+    if (textIncludesAny(normalized, ['sim', 'nao', 'claro', 'com certeza', 'recomendo', 'recomendaria', 'ninguem', 'hoje', 'segunda'])) return false;
     const words = normalized.split(' ').filter(Boolean);
-    if (words.length < 2 || words.length > 4) return false;
+    if (words.length < 1 || words.length > 4) return false;
 
     return words.every((word) => /^[a-z]+$/i.test(word));
 }
@@ -1375,7 +1149,11 @@ function buildE6PhoneFallback() {
 }
 
 function buildE6SatisfactionFallback() {
-    return 'Antes de eu te pedir uma indicacao, me conta uma coisa: voce gostou do atendimento? E recomendaria esse atendimento para outra pessoa?';
+    return 'Antes de encerrarmos, me conta uma coisa: você gostou do atendimento?';
+}
+
+function buildE6RecommendationFallback() {
+    return 'Fico muito feliz em saber disso!!\n\nVocê recomendaria esse atendimento para outra pessoa?';
 }
 
 function userRecommendedService(message: string) {
@@ -1407,7 +1185,7 @@ function userDidNotRecommendService(message: string) {
 }
 
 function buildE6AskIndicationNameFallback() {
-    return 'Fico feliz em saber disso.\n\nTem alguem que voce gostaria de me indicar? Se sim, me passa primeiro o nome dessa pessoa.';
+    return 'Que bom saber disso!!\n\nTem alguém próximo de você que também esteja pensando em começar uma graduação e que você gostaria de indicar?\n\nSe sim, me passa primeiro o nome dessa pessoa.';
 }
 
 function shouldRedirectE6NameToPhone(params: {
@@ -1427,8 +1205,8 @@ function shouldRedirectE6NameToPhone(params: {
 }
 
 function buildE7ClosingFallback(indicatedName: string) {
-    const safeName = indicatedName || 'essa pessoa';
-    return `Se puder, avisa o ${safeName} que alguem aqui da instituicao pode falar com ele sobre a graduacao. Assim ele ja sabe de onde veio o contato.\n\nFico feliz por acompanhar esse seu momento, Helton.`;
+    const safeName = indicatedName || 'a pessoa que você indicou';
+    return `Perfeito!! Se puder, avise ${safeName} que alguém aqui da instituição poderá entrar em contato para apresentar melhor as possibilidades de graduação. Assim, essa pessoa já sabe de onde veio o contato.\n\nFoi um prazer enorme acompanhar você até aqui!! Te desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa para você.`;
 }
 
 function textAsksIndicatedCourseDetails(text: string | undefined) {
@@ -1541,7 +1319,10 @@ function extractRecentUserMessages(
 ) {
     const fromHistory = (history || [])
         .filter((item) => item?.role === 'user')
-        .map((item) => String(item?.content || '').trim())
+        .map((item) => String(item?.content || '')
+            .replace(/^\s*\[\u00c1udio transcrito\]\s*/i, '')
+            .replace(/^\s*\[Audio transcrito\]\s*/i, '')
+            .trim())
         .filter(Boolean)
         .slice(-4);
 
@@ -1571,6 +1352,65 @@ function userRequestedEnrollment(message: string) {
         'vamos fechar',
         'seguir para a inscricao',
     ]);
+}
+
+function isE4PostProposalObjection(message: string, intelligence: Record<string, unknown> | null | undefined) {
+    const intent = String(intelligence?.intent || '').trim();
+    const objection = String(intelligence?.primary_objection || 'none').trim();
+    if (['objection', 'price', 'question', 'human_help'].includes(intent) || objection !== 'none') return true;
+
+    const normalized = normalizeText(message);
+    return textIncludesAny(normalized, [
+        'nao consigo', 'nao posso', 'nao vou conseguir', 'nao tenho certeza',
+        'preciso pensar', 'quero pensar', 'tenho uma duvida', 'tenho uma d�vida',
+        'quanto custa', 'qual o valor', 'mensalidade', 'esta caro',
+    ]);
+}
+
+function getE4EndOfDayDeadline(businessHours: Record<string, unknown> | null | undefined) {
+    const tz = String(businessHours?.tz || 'America/Sao_Paulo');
+    const end = String(businessHours?.end || '22:00');
+    const [endHour, endMinute] = end.split(':').map(Number);
+    const now = new Date();
+    const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    const timeParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+    const readPart = (parts: Intl.DateTimeFormatPart[], type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
+    let localDate = new Date(Date.UTC(readPart(dateParts, 'year'), readPart(dateParts, 'month') - 1, readPart(dateParts, 'day')));
+    const currentMinutes = readPart(timeParts, 'hour') * 60 + readPart(timeParts, 'minute');
+    if (currentMinutes >= endHour * 60 + endMinute) localDate.setUTCDate(localDate.getUTCDate() + 1);
+
+    const targetYear = localDate.getUTCFullYear();
+    const targetMonth = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+    const targetDay = String(localDate.getUTCDate()).padStart(2, '0');
+    const guess = new Date(Date.UTC(targetYear, localDate.getUTCMonth(), localDate.getUTCDate(), endHour, endMinute));
+    const offsetPart = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' }).formatToParts(guess).find((part) => part.type === 'timeZoneName')?.value || 'GMT-03:00';
+    const offset = offsetPart.replace('GMT', '') || '-03:00';
+    return new Date(`${targetYear}-${targetMonth}-${targetDay}T${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}:00${offset}`).toISOString();
+}
+
+async function scheduleE4ProposalCommitmentFollowup(params: {
+    supabase: any;
+    tenantId: string;
+    leadId: string;
+    context: Record<string, unknown>;
+}) {
+    const { data: priorSchedules, error: schedulesError } = await params.supabase
+        .from('followup_schedule').select('attempt').eq('lead_id', params.leadId)
+        .order('attempt', { ascending: false }).limit(1);
+    if (schedulesError) throw new Error(`Erro ao ler tentativas de follow-up: ${schedulesError.message}`);
+
+    const attempt = Math.max(1, Number(priorSchedules?.[0]?.attempt || 0) + 1);
+    const { error } = await params.supabase.from('followup_schedule').insert({
+        lead_id: params.leadId,
+        tenant_id: params.tenantId,
+        attempt,
+        max_attempts: attempt,
+        schedule_at: params.context.response_deadline,
+        trigger_reason: 'e4_proposal_commitment',
+        last_context: params.context,
+        status: 'pending',
+    });
+    if (error) throw new Error(`Erro ao agendar retorno da proposta: ${error.message}`);
 }
 
 function userConfirmedPayment(message: string) {
@@ -1687,11 +1527,11 @@ function textAsksBoletoDate(text: string | undefined) {
 }
 
 function buildE6NoIndicationFallback() {
-    return 'Tudo certo.\n\nSe surgir alguem depois, me fala por aqui.';
+    return 'Tranquilo!!';
 }
 
 function buildE7NoIndicationClosingFallback() {
-    return 'Perfeito.\n\nFico feliz por acompanhar esse seu momento. Se surgir qualquer duvida mais para frente, estou por aqui.';
+    return 'Foi um prazer enorme acompanhar você até aqui!!\n\nTe desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa para você.';
 }
 
 function detectBoletoDateChoice(message: string) {
@@ -2130,6 +1970,9 @@ serve(async (req) => {
         } catch (_) {}
 
         const runtimeConfig = await loadTenantRuntimeConfig(supabase, payload.tenant_id, env);
+        if (payload.debug_llm_trace === true && isLocalRuntimeUrl(env)) {
+            runtimeConfig.env.DEBUG_LLM_TRACE = 'true';
+        }
         const inboundMessageIds = Array.from(new Set((payload.inbound_message_ids ?? []).filter(Boolean)));
         if (inboundMessageIds.length > 0) {
             for (const messageId of inboundMessageIds) {
@@ -2202,7 +2045,11 @@ serve(async (req) => {
                 }).catch(() => {});
             }
         }
-        const lastUserMessage = (payload.recent_user_messages ?? []).slice(-1)[0] ?? payload.text ?? '';
+        const normalizeInboundUserText = (value: unknown) => String(value ?? '')
+            .replace(/^\s*\[\u00c1udio transcrito\]\s*/i, '')
+            .replace(/^\s*\[Audio transcrito\]\s*/i, '')
+            .trim();
+        let lastUserMessage = normalizeInboundUserText((payload.recent_user_messages ?? []).slice(-1)[0] ?? payload.text ?? '');
         await logLeadRuntimeEvent({
             supabase,
             tenantId: payload.tenant_id,
@@ -2221,12 +2068,12 @@ serve(async (req) => {
                 started_at: new Date().toISOString(),
             },
         }).catch(() => {});
-        const historyText = (payload.history ?? [])
+        let historyText = (payload.history ?? [])
             .map((h: any) => `${h.role === 'user' ? 'Lead' : 'Helton'}: ${h.content ?? ''}`)
             .join('\n');
         const { data: leadSnapshot } = await supabase
             .from('leads')
-            .select('nome, lead_first_name, lead_name_confidence, cidade, curso_interesse, dor_principal, valor_parcela, etapa_atual, matriculado, bloqueado, sales_context, proposta_enviada_em, pronto_matricula_em')
+            .select('nome, lead_person_name, lead_first_name, lead_name_confidence, lead_name_source, cidade, curso_interesse, dor_principal, valor_parcela, etapa_atual, matriculado, bloqueado, sales_context, proposta_enviada_em, pronto_matricula_em')
             .eq('id', payload.lead_id)
             .maybeSingle();
         const salesContextBeforeInbound = { ...(leadSnapshot?.sales_context || {}) };
@@ -2294,6 +2141,220 @@ serve(async (req) => {
             }
         }
 
+        const latestSalesContextForNameGate = await readLeadSalesContext(supabase, payload.lead_id);
+        Object.assign(salesContextBeforeInbound, latestSalesContextForNameGate);
+        if (leadSnapshot) leadSnapshot.sales_context = latestSalesContextForNameGate;
+
+        const persistedTrustedName = resolveTrustedLeadName({
+            existingTrustedName: String(leadSnapshot?.lead_person_name || leadSnapshot?.nome || '').trim(),
+        });
+        const pendingPreNameInput = normalizeInboundUserText(salesContextBeforeInbound.pending_pre_name_input);
+        const previousNameGateResolved = Boolean(String(salesContextBeforeInbound.pending_pre_name_resolved_at || '').trim());
+        let trustedNameAlreadyPresent = Boolean(
+            (
+                String(leadSnapshot?.lead_name_confidence || '').trim().toLowerCase() === 'trusted'
+                || previousNameGateResolved
+            )
+            && persistedTrustedName.leadNameUsed
+            && String(persistedTrustedName.leadFirstName || '').trim()
+        );
+        if (
+            trustedNameAlreadyPresent
+            && previousNameGateResolved
+            && String(leadSnapshot?.lead_name_confidence || '').trim().toLowerCase() !== 'trusted'
+        ) {
+            const trustRepair = await supabase
+                .from('leads')
+                .update({
+                    nome: persistedTrustedName.leadPersonName,
+                    lead_person_name: persistedTrustedName.leadPersonName,
+                    lead_first_name: persistedTrustedName.leadFirstName,
+                    lead_name_source: leadSnapshot?.lead_name_source || 'explicit_name_gate',
+                    lead_name_confidence: 'trusted',
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', payload.lead_id)
+                .select('nome, lead_person_name, lead_first_name, lead_name_source, lead_name_confidence')
+                .maybeSingle();
+            if (trustRepair.error) throw trustRepair.error;
+            if (leadSnapshot && trustRepair.data) {
+                leadSnapshot.nome = trustRepair.data.nome;
+                leadSnapshot.lead_person_name = trustRepair.data.lead_person_name;
+                leadSnapshot.lead_first_name = trustRepair.data.lead_first_name;
+                leadSnapshot.lead_name_source = trustRepair.data.lead_name_source;
+                leadSnapshot.lead_name_confidence = trustRepair.data.lead_name_confidence;
+            }
+        }
+
+        if (payload.etapa_atual === 'E1' && !trustedNameAlreadyPresent && pendingPreNameInput) {
+            const resolvedName = resolveTrustedLeadName({ explicitName: lastUserMessage });
+            if (resolvedName.leadNameUsed) {
+                const nameUpdate = await supabase
+                    .from('leads')
+                    .update({
+                        nome: resolvedName.leadPersonName,
+                        lead_person_name: resolvedName.leadPersonName,
+                        lead_first_name: resolvedName.leadFirstName,
+                        lead_name_source: 'explicit_name_gate',
+                        lead_name_confidence: 'trusted',
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', payload.lead_id)
+                    .select('nome, lead_person_name, lead_first_name, lead_name_source, lead_name_confidence')
+                    .maybeSingle();
+                if (nameUpdate.error) throw nameUpdate.error;
+                const persistedName = nameUpdate.data || {};
+                const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                    pending_pre_name_input: null,
+                    pending_pre_name_started_at: null,
+                    pending_pre_name_resolved_at: new Date().toISOString(),
+                });
+                if (leadSnapshot) {
+                    leadSnapshot.nome = persistedName.nome || resolvedName.leadPersonName;
+                    leadSnapshot.lead_person_name = persistedName.lead_person_name || resolvedName.leadPersonName;
+                    leadSnapshot.lead_first_name = persistedName.lead_first_name || resolvedName.leadFirstName;
+                    leadSnapshot.lead_name_source = persistedName.lead_name_source || 'explicit_name_gate';
+                    leadSnapshot.lead_name_confidence = persistedName.lead_name_confidence || 'trusted';
+                    leadSnapshot.sales_context = nextSalesContext;
+                }
+                payload.history = [
+                    ...(payload.history ?? []),
+                    { role: 'user', content: pendingPreNameInput },
+                ];
+                payload.recent_user_messages = [pendingPreNameInput];
+                payload.text = pendingPreNameInput;
+                lastUserMessage = pendingPreNameInput;
+                trustedNameAlreadyPresent = true;
+                historyText = (payload.history ?? [])
+                    .map((h: any) => `${h.role === 'user' ? 'Lead' : 'Helton'}: ${h.content ?? ''}`)
+                    .join('\n');
+                await logLeadRuntimeEvent({
+                    supabase,
+                    tenantId: payload.tenant_id,
+                    leadId: payload.lead_id,
+                    eventType: 'test_name_gate_resolved',
+                    payload: {
+                        trusted_first_name: resolvedName.leadFirstName,
+                        pending_pre_name_input_recovered: pendingPreNameInput,
+                        logged_at: new Date().toISOString(),
+                    },
+                }).catch(() => {});
+            } else {
+                const senderUrl = `${env.SUPABASE_URL}/functions/v1/whatsapp-sender`;
+                const text = 'Claro! Antes de te passar certinho, como posso te chamar?';
+                await fetch(senderUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                    },
+                    body: JSON.stringify({
+                        lead_id: payload.lead_id,
+                        telefone: payload.telefone,
+                        text,
+                        subagente_usado: 'E1',
+                        iteracoes: 0,
+                        tool_calls: [],
+                        skip_takeover: true,
+                    }),
+                });
+                await logLeadRuntimeEvent({
+                    supabase,
+                    tenantId: payload.tenant_id,
+                    leadId: payload.lead_id,
+                    eventType: 'test_name_gate_waiting',
+                    payload: {
+                        pending_pre_name_input: pendingPreNameInput,
+                        rejected_name_candidate: lastUserMessage,
+                        asked_name: true,
+                        logged_at: new Date().toISOString(),
+                    },
+                }).catch(() => {});
+                if (msg?.msg_id) {
+                    await markDebounceGroupStatus({
+                        supabase,
+                        debounceGroupId: payload.debounce_group_id || null,
+                        status: 'processed',
+                    }).catch(() => null);
+                    await deleteMessage(supabase, Q_AI, msg.msg_id).catch(() => null);
+                }
+                return new Response(JSON.stringify({
+                    status: 'ok',
+                    skipped: 'name_gate_waiting',
+                    ask_name: true,
+                }), {
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+        }
+
+        const nameGateCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []);
+        const nameGateFallbackCourseQuery = payload.etapa_atual === 'E1'
+            ? extractLikelyE1CourseQuery(lastUserMessage)
+            : '';
+        const nameGateCommercialIntent = payload.etapa_atual === 'E1'
+            && (
+                (
+                    nameGateCourseIntent.matched === true
+                    && ['specific', 'specific_or_related'].includes(String(nameGateCourseIntent.mode || ''))
+                )
+                || Boolean(nameGateFallbackCourseQuery)
+            );
+
+        if (nameGateCommercialIntent && !trustedNameAlreadyPresent) {
+            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                pending_pre_name_input: lastUserMessage,
+                pending_pre_name_started_at: new Date().toISOString(),
+            });
+            if (leadSnapshot) leadSnapshot.sales_context = nextSalesContext;
+            const senderUrl = `${env.SUPABASE_URL}/functions/v1/whatsapp-sender`;
+            const text = 'Claro! Antes de te passar certinho, como posso te chamar?';
+            await fetch(senderUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                },
+                body: JSON.stringify({
+                    lead_id: payload.lead_id,
+                    telefone: payload.telefone,
+                    text,
+                    subagente_usado: 'E1',
+                    iteracoes: 0,
+                    tool_calls: [],
+                    skip_takeover: true,
+                }),
+            });
+            await logLeadRuntimeEvent({
+                supabase,
+                tenantId: payload.tenant_id,
+                leadId: payload.lead_id,
+                eventType: 'test_name_gate_blocked_commercial_start',
+                payload: {
+                    pending_pre_name_input: lastUserMessage,
+                    course_consultation_blocked: true,
+                    city_question_blocked: true,
+                    asked_name: true,
+                    logged_at: new Date().toISOString(),
+                },
+            }).catch(() => {});
+            if (msg?.msg_id) {
+                await markDebounceGroupStatus({
+                    supabase,
+                    debounceGroupId: payload.debounce_group_id || null,
+                    status: 'processed',
+                }).catch(() => null);
+                await deleteMessage(supabase, Q_AI, msg.msg_id).catch(() => null);
+            }
+            return new Response(JSON.stringify({
+                status: 'ok',
+                skipped: 'name_gate',
+                ask_name: true,
+            }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+
         const intelligence = await classifyLeadMessage({
             apiKey: runtimeConfig.openaiApiKey,
             model: runtimeConfig.model.subagent,
@@ -2309,19 +2370,46 @@ serve(async (req) => {
             history: payload.history ?? [],
             latestUserMessage: lastUserMessage,
         });
+        const resolvedPendingCityThisTurn =
+            payload.etapa_atual === 'E1'
+            && stageState.matched === true
+            && stageState.classification === 'contextual_response'
+            && stageState.classificationReason === 'resolved_pending_city';
         const explicitCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []).matched === true;
         const pendingCriterion = derivePendingCriterion({
             stage: payload.etapa_atual,
             leadSnapshot,
             history: payload.history ?? [],
         });
+        const e1PendingCriterionResponse =
+            payload.etapa_atual === 'E1'
+            && stageState.matched === true
+            && stageState.classification === 'contextual_response'
+            && [
+                'resolved_pending_city',
+                'partial_pending_motivation_work_status',
+                'resolved_pending_motivation',
+                'motivation_already_answered_complaint',
+            ].includes(String(stageState.classificationReason || ''));
+        const effectiveExplicitCourseIntent = e1PendingCriterionResponse
+            ? false
+            : (explicitCourseIntent || stageState.explicitNewIntent === true);
         const e1SpecificCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []);
         const fallbackE1CourseQuery = payload.etapa_atual === 'E1' && pendingCriterion === 'course'
             ? extractLikelyE1CourseQuery(lastUserMessage)
             : '';
+        const e1ExplicitCourseChangeIntent =
+            payload.etapa_atual === 'E1'
+            && pendingCriterion !== 'course'
+            && !e1PendingCriterionResponse
+            && !resolvedPendingCityThisTurn
+            && e1SpecificCourseIntent.matched === true
+            && ['specific', 'specific_or_related'].includes(String(e1SpecificCourseIntent.mode || ''));
         const shouldRunE1CoursePreflight =
             payload.etapa_atual === 'E1'
-            && pendingCriterion === 'course'
+            && !e1PendingCriterionResponse
+            && !resolvedPendingCityThisTurn
+            && (pendingCriterion === 'course' || e1ExplicitCourseChangeIntent)
             && (
                 (
                     e1SpecificCourseIntent.matched === true
@@ -2425,13 +2513,14 @@ serve(async (req) => {
             const preservedCourseState = preserveCourseStateForContextualPatch({
                 previousLeadSnapshot: leadSnapshot,
                 patch: stageState.statePatch,
-                explicitNewCourseIntent: explicitCourseIntent || stageState.explicitNewIntent === true,
+                explicitNewCourseIntent: effectiveExplicitCourseIntent,
                 authorizedCourseChange: stageState.authorizedCourseChange === true
                     || ['selected_catalog_course', 'valid_alternative_course_selection'].includes(String(stageState.classificationReason || '')),
             });
             const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
                 ...preservedCourseState.patch,
-                pending_criterion: preservedCourseState.patch.pending_criterion ?? pendingCriterion,
+                pending_criterion: payload.etapa_atual === 'E1' && Object.prototype.hasOwnProperty.call(preservedCourseState.patch, 'pending_criterion')
+                    ? preservedCourseState.patch.pending_criterion : (preservedCourseState.patch.pending_criterion ?? pendingCriterion),
                 last_inbound_classification: stageState.classification,
                 last_inbound_classification_reason: stageState.classificationReason,
             });
@@ -2495,7 +2584,7 @@ serve(async (req) => {
                 eventType: 'test_course_state_invariant',
                 payload: {
                     stage: payload.etapa_atual,
-                    explicit_new_course_intent: explicitCourseIntent || stageState.explicitNewIntent === true,
+                    explicit_new_course_intent: effectiveExplicitCourseIntent,
                     authorized_course_change: stageState.authorizedCourseChange === true
                         || ['selected_catalog_course', 'valid_alternative_course_selection'].includes(String(stageState.classificationReason || '')),
                     course_status_before: preservedCourseState.courseStatusBefore,
@@ -2531,7 +2620,7 @@ serve(async (req) => {
                     sales_context: leadSnapshot?.sales_context || {},
                 },
                 state_patch: stageState.statePatch || {},
-                explicit_new_course_intent: explicitCourseIntent || stageState.explicitNewIntent === true,
+                explicit_new_course_intent: effectiveExplicitCourseIntent,
                 checkpoint_status: {
                     proposal: leadSnapshot?.sales_context?.proposal_checkpoint_pending === true,
                     enrollment: leadSnapshot?.sales_context?.enrollment_checkpoint_pending === true,
@@ -2647,15 +2736,45 @@ serve(async (req) => {
             }).catch(() => {});
         }
 
-        if (intelligence.asked_price_early) {
-            await notifyAdminIfNeeded(
-                'price_early',
-                `price_early_${payload.etapa_atual}`,
-                `Lead perguntou valor antes da etapa financeira.\nLead: ${leadSnapshot?.nome || payload.telefone}\nTelefone: ${payload.telefone}\nEtapa atual: ${payload.etapa_atual}\nMensagem: ${lastUserMessage}`,
-            );
+        const preProposalPriceAsk = intelligence.asked_price_early === true && !leadSnapshot?.proposta_enviada_em;
+        if (preProposalPriceAsk) {
+            const currentPriceAskContext = await readLeadSalesContext(supabase, payload.lead_id);
+            const previousPriceAskCount = Number(currentPriceAskContext.pre_proposal_price_ask_count || 0);
+            const nextPriceAskCount = previousPriceAskCount + 1;
+            const alreadyNotifiedPriceAsk = currentPriceAskContext.pre_proposal_price_admin_notified === true;
+            const shouldNotifyPriceAsk = nextPriceAskCount >= 2 && !alreadyNotifiedPriceAsk;
+            const nextPriceAskContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                pre_proposal_price_ask_count: nextPriceAskCount,
+                pre_proposal_price_last_asked_at: new Date().toISOString(),
+                pre_proposal_price_admin_notified: alreadyNotifiedPriceAsk || shouldNotifyPriceAsk,
+            });
+            if (leadSnapshot) leadSnapshot.sales_context = nextPriceAskContext;
+
+            await logLeadRuntimeEvent({
+                supabase,
+                tenantId: payload.tenant_id,
+                leadId: payload.lead_id,
+                eventType: 'test_pre_proposal_price_ask',
+                payload: {
+                    count: nextPriceAskCount,
+                    admin_notified: shouldNotifyPriceAsk,
+                    already_notified: alreadyNotifiedPriceAsk,
+                    etapa_atual: payload.etapa_atual,
+                    mensagem: lastUserMessage,
+                    created_at: new Date().toISOString(),
+                },
+            }).catch(() => {});
+
+            if (shouldNotifyPriceAsk) {
+                await notifyAdminIfNeeded(
+                    'price_early',
+                    `price_early_repeat_${payload.lead_id}`,
+                    `Lead perguntou valor antes da etapa financeira mais de uma vez.\nLead: ${leadSnapshot?.nome || payload.telefone}\nTelefone: ${payload.telefone}\nEtapa atual: ${payload.etapa_atual}\nMensagem: ${lastUserMessage}`,
+                );
+            }
         }
 
-        if (intelligence.proposal_ready) {
+        if (intelligence.proposal_ready && !preProposalPriceAsk) {
             await notifyAdminIfNeeded(
                 'proposal_ready',
                 `proposal_ready_${payload.etapa_atual}`,
@@ -2676,9 +2795,15 @@ serve(async (req) => {
             (intelligence.intent === 'human_help' || intelligence.asked_discount === true);
 
         let out;
+        let e4ProposalFollowupContext: Record<string, unknown> | null = null;
         let finalSubagent = initialSubagent;
         let currentStage = payload.etapa_atual;
-        let workingHistory = payload.history ?? [];
+        let workingHistory = (payload.history ?? []).map((item: any) => item?.role === 'user'
+            ? {
+                ...item,
+                content: normalizeInboundUserText(item?.content),
+            }
+            : item);
         if (shouldForceHandoff) {
             await supabase
                 .from('leads')
@@ -2733,7 +2858,23 @@ serve(async (req) => {
                     messagePolicy:      runtimeConfig.messagePolicy,
                     intelligence,
                     leadSnapshot,
+                    ...(currentSubagent === 'E1' && hop === 0 ? {
+                        inboundResolution: stageState,
+                        pendingCriterionBefore: pendingCriterion,
+                    } : {}),
                 });
+
+                if (
+                    currentSubagent === 'E1'
+                    && stageState.classificationReason === 'resolved_pending_motivation'
+                ) {
+                    stageOutput.processAction = 'complete_stage';
+                    stageOutput.allowedIntent = 'complete_e1_and_handoff_to_e2';
+                    stageOutput.conversationalBehavior = 'complete_stage';
+                    stageOutput.pendingCriterionAfter = null;
+                    stageOutput.avancou = stageOutput.avancou === true;
+                    stageOutput.handoff = false;
+                }
 
                 if (
                     currentSubagent === 'E2'
@@ -2744,6 +2885,9 @@ serve(async (req) => {
                     stageOutput.avancou = false;
                     stageOutput.toolCalls = filterAdvanceToolCalls(filterKnowledgeToolCalls(stageOutput.toolCalls));
                     stageOutput.text = buildE2StageHandoffFallback();
+                    stageOutput.responseOrigin = 'technical_failure';
+                    stageOutput.fallbackUsed = true;
+                    stageOutput.fallbackReason = 'invalid_e2_stage_handoff_output';
                 }
 
                 if (
@@ -2766,25 +2910,15 @@ serve(async (req) => {
                     stageOutput.avancou = false;
                     stageOutput.toolCalls = filterAdvanceToolCalls(stageOutput.toolCalls);
                     stageOutput.text = buildE2AgreementFallback();
+                    stageOutput.responseOrigin = 'technical_failure';
+                    stageOutput.fallbackUsed = true;
+                    stageOutput.fallbackReason = 'invalid_e2_advance';
                     }
                 }
 
                 const liveSalesContextForViolationCheck = ['E1', 'E2'].includes(currentSubagent)
                     ? await readLeadSalesContext(supabase, payload.lead_id)
                     : null;
-                if (
-                    currentSubagent === 'E2'
-                    && String(liveSalesContextForViolationCheck?.e2_availability_objection_kind || '').trim() === 'travel_or_move'
-                    && String(stageOutput.processAction || '').trim() === 'ask_vaccine_decider'
-                    && !e2TravelMoveOutputMatchesModality(stageOutput.text, liveSalesContextForViolationCheck?.modalidade_oferta || leadSnapshot?.modalidade)
-                ) {
-                    stageOutput.text = buildE2TravelMoveDecisionFallback(liveSalesContextForViolationCheck?.modalidade_oferta || leadSnapshot?.modalidade);
-                    stageOutput.responseOrigin = 'structural_contract_recovery';
-                    stageOutput.deterministicReplyUsed = true;
-                    stageOutput.allowedIntent = 'handle_travel_or_move_and_ask_vaccine_decider';
-                    stageOutput.conversationalBehavior = 'clarify_modality_impact_then_ask_decision_maker';
-                    stageOutput.pendingCriterionAfter = 'vaccine_decider';
-                }
                 const earlyStageForbiddenTopicsRaw = ['E1', 'E2'].includes(currentSubagent)
                     ? detectForbiddenEarlyStageTopics(stageOutput.text)
                     : [];
@@ -2792,19 +2926,20 @@ serve(async (req) => {
                     && String(liveSalesContextForViolationCheck?.e2_availability_objection_kind || '').trim() === 'travel_or_move';
                 const allowE2ConditionalMethodology = currentSubagent === 'E2'
                     && String(liveSalesContextForViolationCheck?.e2_commercial_agreement_status || '').trim() === 'conditional_price_pending_confirmation';
-                const earlyStageForbiddenTopics = allowE2TravelMoveModality
-                    ? earlyStageForbiddenTopicsRaw.filter((topic) => ![
-                        'modalidade',
-                        'ead',
-                        'semipresencial',
-                        'presencial',
-                        'metodologia',
-                        'funcionamento das aulas',
-                    ].includes(String(topic)))
-                    : allowE2ConditionalMethodology
-                        ? earlyStageForbiddenTopicsRaw.filter((topic) => !['metodologia'].includes(String(topic)))
-                    : earlyStageForbiddenTopicsRaw;
+                const allowE2AgreementBolsa = currentSubagent === 'E2'
+                    && String(stageOutput.processAction || '').trim() === 'ask_vaccine_agreement';
+                const earlyStageForbiddenTopics = earlyStageForbiddenTopicsRaw.filter((topic) => {
+                    const currentTopic = String(topic);
+                    if (
+                        allowE2TravelMoveModality
+                        && ['modalidade', 'ead', 'semipresencial', 'presencial', 'metodologia', 'funcionamento das aulas'].includes(currentTopic)
+                    ) return false;
+                    if (allowE2ConditionalMethodology && currentTopic === 'metodologia') return false;
+                    if (allowE2AgreementBolsa && currentTopic === 'bolsa') return false;
+                    return true;
+                });
                 const ambiguousLineViolations = currentSubagent === 'E1'
+                    && liveSalesContextForViolationCheck?.course_status === 'ambiguous_available'
                     ? detectAmbiguousCourseLineViolations(
                         stageOutput.text,
                         Array.isArray(liveSalesContextForViolationCheck?.available_course_lines)
@@ -2907,6 +3042,7 @@ serve(async (req) => {
                         course_line: String(regenerationLeadSnapshot?.sales_context?.linha_formacao || '').trim() || null,
                         course_status: String(regenerationLeadSnapshot?.sales_context?.course_status || '').trim() || null,
                         pending_criterion: pendingCriterion || null,
+                        ...(currentSubagent === 'E1' ? stageOutput.speakableFacts : {}),
                     };
                     if (String(regenerationLeadSnapshot?.sales_context?.requested_area_name || '').trim()) {
                         speakableFacts.requested_area = String(regenerationLeadSnapshot.sales_context.requested_area_name || '').trim();
@@ -2920,6 +3056,17 @@ serve(async (req) => {
                     if (Array.isArray(regenerationLeadSnapshot?.sales_context?.available_course_lines)
                         && regenerationLeadSnapshot.sales_context.available_course_lines.length > 0) {
                         speakableFacts.available_course_lines = regenerationLeadSnapshot.sales_context.available_course_lines;
+                    }
+                    if (
+                        currentSubagent === 'E1'
+                        && String(liveSalesContext.course_status || '').trim() === 'confirmed_available'
+                        && pendingCriterion === 'city'
+                    ) {
+                        delete speakableFacts.course_status;
+                        delete speakableFacts.available_course_lines;
+                        delete speakableFacts.availability;
+                        delete speakableFacts.offered;
+                        speakableFacts.e1_behavior = 'selected_course_to_city';
                     }
 
                     const regeneratedOutput = deterministicRecovery
@@ -3229,13 +3376,72 @@ serve(async (req) => {
 
                     const proposalCompleted = liveSalesContext.proposal_checkpoint_completed === true;
                     const enrollmentCompleted = liveSalesContext.enrollment_checkpoint_completed === true;
+                    const postProposalOpeningPending = proposalCompleted
+                        && liveSalesContext.e4_post_proposal_opening_pending === true
+                        && liveSalesContext.e4_post_proposal_opening_sent !== true;
+
+                    if (postProposalOpeningPending) {
+                        stageOutput.avancou = false;
+                        stageOutput.handoff = false;
+                        stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(filterKnowledgeToolCalls(stageOutput.toolCalls)));
+                        const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                            e4_post_proposal_opening_pending: false,
+                            e4_post_proposal_opening_sent: true,
+                            e4_post_proposal_opening_sent_at: new Date().toISOString(),
+                        });
+                        if (leadSnapshot) leadSnapshot.sales_context = nextSalesContext;
+                    } else if (
+                        proposalCompleted
+                        && !enrollmentCompleted
+                        && payload.trigger !== 'stage_handoff'
+                        && Boolean(String(activeLastUserMessage || '').trim())
+                        && !userRequestedEnrollment(activeLastUserMessage)
+                        && !isE4PostProposalObjection(activeLastUserMessage, intelligence)
+                    ) {
+                        stageOutput.avancou = false;
+                        stageOutput.handoff = false;
+                        stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        const responseDeadline = getE4EndOfDayDeadline(runtimeConfig.businessHours);
+                        e4ProposalFollowupContext = {
+                            stage: 'E4',
+                            proposal_sent: true,
+                            response_deadline: responseDeadline,
+                            course: String(liveSalesContext.course_display_name || leadSnapshot?.curso_interesse || '').trim() || null,
+                            motivation: String(liveSalesContext.motivacao_principal || leadSnapshot?.dor_principal || '').trim() || null,
+                            decision_participant: String(liveSalesContext.e2_decision_participant || '').trim() || null,
+                            decision_answer: String(liveSalesContext.e2_vaccine_decider_answer || '').trim() || null,
+                            candidate_response: activeLastUserMessage,
+                        };
+                        const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                            e4_proposal_commitment_answer: activeLastUserMessage,
+                            e4_proposal_response_due_at: responseDeadline,
+                            e4_proposal_followup_scheduled: false,
+                        });
+                        if (leadSnapshot) leadSnapshot.sales_context = nextSalesContext;
+                    }
 
                     if (!proposalCompleted) {
                         const fullNameCandidate = extractFullNameCandidate(activeLastUserMessage);
                         const lastKnownName = String(liveSalesContext.proposal_full_name || leadSnapshot?.nome || '').trim();
-                        const proposalName = lastKnownName || (looksLikeFullName(fullNameCandidate) ? fullNameCandidate : '');
+                        const proposalName = looksLikeFullName(fullNameCandidate)
+                            ? fullNameCandidate
+                            : looksLikeFullName(lastKnownName)
+                                ? lastKnownName
+                                : '';
 
                         if (proposalName) {
+                            const proposalCourse = String(
+                                liveSalesContext.course_display_name
+                                || leadSnapshot?.curso_interesse
+                                || 'nao informado',
+                            ).trim();
+                            const proposalCity = String(leadSnapshot?.cidade || 'nao informada').trim();
+                            const proposalMotivation = String(
+                                liveSalesContext.motivacao_principal
+                                || leadSnapshot?.dor_principal
+                                || 'nao informado',
+                            ).trim();
+
                             await supabase
                                 .from('leads')
                                 .update({
@@ -3248,12 +3454,14 @@ serve(async (req) => {
                                 checkpointAdmin: 'proposal_send',
                                 motivoPausa: 'aguardando_geracao_envio_proposta',
                                 adminText:
-                                    `Gerar e enviar proposta para este lead.\n` +
-                                    `Lead: ${proposalName}\n` +
-                                    `Telefone: ${payload.telefone}\n` +
-                                    `Etapa pausada: E4\n` +
-                                    `Curso: ${String(leadSnapshot?.curso_interesse || '') || 'nao informado'}\n` +
-                                    `Cidade: ${String(leadSnapshot?.cidade || '') || 'nao informada'}`,
+                                    `Alerta interno: lead solicitou proposta para o curso de ${proposalCourse}\n\n` +
+                                    `Nome Completo do Lead: ${proposalName}\n` +
+                                    `Tel: ${payload.telefone}\n` +
+                                    `Etapa atual: E4\n` +
+                                    `Curso: ${proposalCourse}\n\n` +
+                                    `Detalhes\n` +
+                                    `Cidade: ${proposalCity}\n` +
+                                    `Motivo: ${proposalMotivation}`,
                                 salesContextPatch: {
                                     proposal_full_name: proposalName,
                                     proposal_checkpoint_pending: true,
@@ -3267,7 +3475,7 @@ serve(async (req) => {
                             stageOutput.skipTakeoverSend = true;
                             stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
                             stageOutput.text = buildE4ProposalPauseFallback();
-                        } else if (!lastKnownName) {
+                        } else {
                             stageOutput.handoff = false;
                             stageOutput.avancou = false;
                             stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
@@ -3368,174 +3576,170 @@ serve(async (req) => {
 
                 if (currentSubagent === 'E6') {
                     const e6Context = await readLeadSalesContext(supabase, payload.lead_id);
-
-                    if (
-                        e6Context.e6_feedback_collected !== true
-                        && !looksLikePersonNameReply(activeLastUserMessage)
-                        && !looksLikePhoneReply(activeLastUserMessage)
-                        && !userDeclinedIndication(activeLastUserMessage)
-                        && !userRecommendedService(activeLastUserMessage)
-                        && !userDidNotRecommendService(activeLastUserMessage)
-                    ) {
+                    const normalizedE6Message = normalizeText(activeLastUserMessage);
+                    const negativeFeedback = userDidNotRecommendService(activeLastUserMessage);
+                    const explicitRecommendation = textIncludesAny(normalizedE6Message, ['recomendo', 'recomendaria']);
+                    const positiveFeedback = !negativeFeedback && userRecommendedService(activeLastUserMessage);
+                    const stopE6 = async (reason: string) => {
                         stageOutput.avancou = false;
                         stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                        stageOutput.text = buildE6SatisfactionFallback();
-                    }
+                        try {
+                            const forcedAdvance = await tool_avancar_etapa({
+                                supabase,
+                                tenantId: payload.tenant_id,
+                                leadId: payload.lead_id,
+                                telefone: payload.telefone,
+                                env: runtimeConfig.env,
+                            }, { etapa_destino: 'E7' });
+                            stageOutput.avancou = true;
+                            stageOutput.toolCalls.push({
+                                name: 'avancar_etapa',
+                                args: { etapa_destino: 'E7' },
+                                result: forcedAdvance,
+                            });
+                        } catch (forceAdvanceError) {
+                            console.error(`[ai-processor] falha ao avancar E6->E7 ${reason}: ${String(forceAdvanceError)}`);
+                            stageOutput.avancou = false;
+                        }
+                    };
 
-                    if (userRecommendedService(activeLastUserMessage) || userDidNotRecommendService(activeLastUserMessage)) {
-                        const recommended = userRecommendedService(activeLastUserMessage);
-                        const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                            e6_feedback_collected: true,
-                            e6_recommended_service: recommended,
-                        });
-                        leadSnapshot.sales_context = nextSalesContext;
-
-                        stageOutput.avancou = false;
-                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                        stageOutput.text = recommended
-                            ? buildE6AskIndicationNameFallback()
-                            : buildE6NoIndicationFallback();
-
-                        if (!recommended) {
+                    const satisfactionResolvedThisTurn = String(stageState.classificationReason || '') === 'resolved_pending_service_satisfaction';
+                    const satisfactionCollected = !satisfactionResolvedThisTurn
+                        && (e6Context.e6_satisfaction_collected === true || e6Context.e6_feedback_collected === true);
+                    if (!satisfactionCollected) {
+                        if (negativeFeedback) {
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                e6_satisfaction_collected: true,
+                                e6_satisfaction_positive: false,
+                                e6_feedback_collected: true,
+                                e6_recommended_service: false,
+                                no_indication: true,
+                                pending_criterion: null,
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.text = 'Entendo. Obrigado pela sinceridade.';
+                            await stopE6('apos feedback negativo');
+                        } else if (positiveFeedback) {
+                            const recommendationAlreadyAnswered = explicitRecommendation;
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                e6_satisfaction_collected: true,
+                                e6_satisfaction_positive: true,
+                                e6_feedback_collected: recommendationAlreadyAnswered,
+                                e6_recommended_service: recommendationAlreadyAnswered ? true : null,
+                                no_indication: false,
+                                pending_criterion: recommendationAlreadyAnswered ? 'referral_name' : 'service_recommendation',
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = recommendationAlreadyAnswered
+                                ? buildE6AskIndicationNameFallback()
+                                : buildE6RecommendationFallback();
+                        } else {
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = buildE6SatisfactionFallback();
+                        }
+                    } else if (e6Context.e6_feedback_collected !== true) {
+                        if (negativeFeedback) {
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                e6_feedback_collected: true,
+                                e6_recommended_service: false,
+                                no_indication: true,
+                                pending_criterion: null,
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.text = 'Tranquilo!!';
+                            await stopE6('apos recomendacao negativa');
+                        } else if (positiveFeedback) {
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                e6_feedback_collected: true,
+                                e6_recommended_service: true,
+                                no_indication: false,
+                                pending_criterion: 'referral_name',
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = buildE6AskIndicationNameFallback();
+                        } else {
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = buildE6RecommendationFallback();
+                        }
+                    } else if (e6Context.e6_recommended_service === true) {
+                        if (userDeclinedIndication(activeLastUserMessage)) {
+                            console.warn('[ai-processor] lead sem indicacao; avancando E6->E7');
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                no_indication: true,
+                                pending_indication_name: null,
+                                pending_criterion: null,
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.text = buildE6NoIndicationFallback();
+                            await stopE6('sem indicacao');
+                        } else if (!String(e6Context.pending_indication_name || '').trim() && looksLikePersonNameReply(activeLastUserMessage)) {
+                            console.warn('[ai-processor] capturando nome do indicado em E6');
+                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                pending_indication_name: activeLastUserMessage.trim(),
+                                pending_criterion: 'referral_phone',
+                            });
+                            leadSnapshot.sales_context = nextSalesContext;
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = buildE6PhoneFallback();
+                        } else if (String(e6Context.pending_indication_name || '').trim() && looksLikePhoneReply(activeLastUserMessage)) {
+                            console.warn('[ai-processor] registrando indicacao em E6 a partir do telefone informado');
+                            const indicatedName = String(e6Context.pending_indication_name || '').trim();
+                            stageOutput.text = '';
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
                             try {
-                                const forcedAdvance = await tool_avancar_etapa({
+                                const indicationResult = await tool_registrar_indicacao({
                                     supabase,
                                     tenantId: payload.tenant_id,
                                     leadId: payload.lead_id,
                                     telefone: payload.telefone,
                                     env: runtimeConfig.env,
-                                }, { etapa_destino: 'E7' });
-
-                                stageOutput.avancou = true;
-                                stageOutput.toolCalls.push({
-                                    name: 'avancar_etapa',
-                                    args: { etapa_destino: 'E7' },
-                                    result: forcedAdvance,
+                                }, {
+                                    telefone_indicado: activeLastUserMessage.trim(),
+                                    nome_indicado: indicatedName,
                                 });
-                            } catch (forceAdvanceError) {
-                                console.error(`[ai-processor] falha ao avancar E6->E7 apos feedback negativo: ${String(forceAdvanceError)}`);
+                                stageOutput.toolCalls.push({
+                                    name: 'registrar_indicacao',
+                                    args: { telefone_indicado: activeLastUserMessage.trim(), nome_indicado: indicatedName },
+                                    result: indicationResult,
+                                });
+                                await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                    pending_indication_name: null,
+                                    pending_indication_phone: activeLastUserMessage.trim(),
+                                    referral_registered: true,
+                                    last_indicated_name: indicatedName,
+                                    pending_criterion: null,
+                                });
+                                await stopE6('apos registrar indicacao');
+                            } catch (indicationError) {
+                                console.error(`[ai-processor] falha ao registrar indicacao em E6: ${String(indicationError)}`);
                                 stageOutput.avancou = false;
+                                stageOutput.text = buildE6PhoneFallback();
                             }
+                        } else {
+                            stageOutput.avancou = false;
+                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                            stageOutput.text = String(e6Context.pending_indication_name || '').trim()
+                                ? buildE6PhoneFallback()
+                                : buildE6AskIndicationNameFallback();
                         }
-                    }
-                }
-
-                if (
-                    currentSubagent === 'E6'
-                    && userDeclinedIndication(activeLastUserMessage)
-                ) {
-                    console.warn('[ai-processor] lead sem indicacao; avancando E6->E7');
-                    const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                        no_indication: true,
-                        pending_indication_name: null,
-                        e6_feedback_collected: true,
-                    });
-                    leadSnapshot.sales_context = nextSalesContext;
-                    stageOutput.avancou = false;
-                    stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                    try {
-                        const forcedAdvance = await tool_avancar_etapa({
-                            supabase,
-                            tenantId: payload.tenant_id,
-                            leadId: payload.lead_id,
-                            telefone: payload.telefone,
-                            env: runtimeConfig.env,
-                        }, { etapa_destino: 'E7' });
-
-                        stageOutput.avancou = true;
-                        stageOutput.toolCalls.push({
-                            name: 'avancar_etapa',
-                            args: { etapa_destino: 'E7' },
-                            result: forcedAdvance,
-                        });
+                    } else {
                         stageOutput.text = buildE6NoIndicationFallback();
-                    } catch (forceAdvanceError) {
-                        console.error(`[ai-processor] falha ao avancar E6->E7 sem indicacao: ${String(forceAdvanceError)}`);
-                    }
-                }
-
-                if (
-                    currentSubagent === 'E6'
-                    && looksLikePersonNameReply(activeLastUserMessage)
-                ) {
-                    console.warn('[ai-processor] capturando nome do indicado em E6');
-                    await mergeLeadSalesContext(supabase, payload.lead_id, {
-                        pending_indication_name: activeLastUserMessage.trim(),
-                        e6_feedback_collected: true,
-                        e6_recommended_service: true,
-                    });
-                    stageOutput.avancou = false;
-                    stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                    stageOutput.text = buildE6PhoneFallback();
-                }
-
-                if (
-                    currentSubagent === 'E6'
-                    && looksLikePhoneReply(activeLastUserMessage)
-                ) {
-                    console.warn('[ai-processor] registrando indicacao em E6 a partir do telefone informado');
-                    const salesContext = await readLeadSalesContext(supabase, payload.lead_id);
-                    const indicatedName = String(
-                        salesContext.pending_indication_name
-                        || latestIndicatedName(workingHistory, activeRecentUserMessages)
-                        || '',
-                    ).trim();
-
-                    stageOutput.text = '';
-                    stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-
-                    try {
-                        const indicationResult = await tool_registrar_indicacao({
-                            supabase,
-                            tenantId: payload.tenant_id,
-                            leadId: payload.lead_id,
-                            telefone: payload.telefone,
-                            env: runtimeConfig.env,
-                        }, {
-                            telefone_indicado: activeLastUserMessage.trim(),
-                            nome_indicado: indicatedName || undefined,
-                        });
-
-                        stageOutput.toolCalls.push({
-                            name: 'registrar_indicacao',
-                            args: {
-                                telefone_indicado: activeLastUserMessage.trim(),
-                                nome_indicado: indicatedName || undefined,
-                            },
-                            result: indicationResult,
-                        });
-
-                        await mergeLeadSalesContext(supabase, payload.lead_id, {
-                            pending_indication_name: null,
-                            pending_indication_phone: activeLastUserMessage.trim(),
-                            referral_registered: true,
-                            last_indicated_name: indicatedName || null,
-                        });
-
-                        const forcedAdvance = await tool_avancar_etapa({
-                            supabase,
-                            tenantId: payload.tenant_id,
-                            leadId: payload.lead_id,
-                            telefone: payload.telefone,
-                            env: runtimeConfig.env,
-                        }, { etapa_destino: 'E7' });
-
-                        stageOutput.avancou = true;
-                        stageOutput.toolCalls.push({
-                            name: 'avancar_etapa',
-                            args: { etapa_destino: 'E7' },
-                            result: forcedAdvance,
-                        });
-                    } catch (forceAdvanceError) {
-                        console.error(`[ai-processor] falha ao registrar indicacao em E6: ${String(forceAdvanceError)}`);
-                        stageOutput.avancou = false;
-                        stageOutput.text = buildE6PhoneFallback();
+                        await stopE6('sem recomendacao');
                     }
                 }
 
                 if (currentSubagent === 'E7') {
                     const liveSalesContext = await readLeadSalesContext(supabase, payload.lead_id);
-                    if (liveSalesContext.no_indication === true && hop > 0) {
+                    if (liveSalesContext.referral_registered === true) {
+                        stageOutput.text = buildE7ClosingFallback(String(liveSalesContext.last_indicated_name || '').trim());
+                    } else if (liveSalesContext.no_indication === true && hop > 0) {
                         stageOutput.text = buildE7NoIndicationClosingFallback();
                     }
                 }
@@ -3545,6 +3749,7 @@ serve(async (req) => {
                     && stageOutput.text
                     && stageOutput.fallbackUsed !== true
                     && stageOutput.responseOrigin !== 'structural_contract_recovery'
+                    && !(currentSubagent === 'E1' && ['ask_motivation', 'complete_stage'].includes(String(stageOutput.processAction || '').trim()))
                 ) {
                     const originalOutput = stageOutput.text;
                     const regeneratedOutput = await runSubagent({
@@ -3637,13 +3842,12 @@ serve(async (req) => {
                             || 'esse curso',
                         ).trim();
                         nextPendingCriterion = 'city';
-                        stageOutput.text = buildE1AskCityFallback(courseName);
                         stageOutput.processAction = 'ask_city';
-                        stageOutput.allowedIntent = 'confirm_course_available_and_ask_city';
-                        stageOutput.conversationalBehavior = 'acknowledge_course_or_line_choice_and_ask_city';
+                        stageOutput.allowedIntent = 'ask_city';
+                        stageOutput.conversationalBehavior = 'ask_city';
                         stageOutput.pendingCriterionAfter = 'city';
-                        stageOutput.responseOrigin = 'structural_contract_recovery';
-                        stageOutput.deterministicReplyUsed = true;
+                        stageOutput.responseOrigin = stageOutput.responseOrigin || 'llm_free_generation';
+                        stageOutput.deterministicReplyUsed = false;
                         stageOutput.personalityViolations = [];
                         stageOutput.finalPersonalityValid = true;
                         await logLeadRuntimeEvent({
@@ -3735,12 +3939,7 @@ serve(async (req) => {
                         stageOutput.allowedIntent = 'complete_e1_and_handoff_to_e2';
                         stageOutput.conversationalBehavior = 'optional_short_contextual_acknowledgement';
                         const modelCompletionText = extractModelCompletionAcknowledgement(stageOutput.text || stageOutput.rawModelOutput || stageOutput.outputBeforeGovernance);
-                        stageOutput.text = modelCompletionText || buildE1CompletionFallback({
-                            latestUserMessage: activeLastUserMessage,
-                            courseName: String(e1LeadSnapshot?.sales_context?.course_display_name || e1LeadSnapshot?.curso_interesse || '').trim() || null,
-                        });
-                        stageOutput.deterministicReplyUsed = !modelCompletionText;
-                        stageOutput.responseOrigin = modelCompletionText ? (stageOutput.responseOrigin || 'llm_free_generation') : 'structural_fallback';
+                        stageOutput.text = modelCompletionText || '';
                         await logLeadRuntimeEvent({
                             supabase,
                             tenantId: payload.tenant_id,
@@ -3847,6 +4046,59 @@ serve(async (req) => {
 
                 lastOutput = stageOutput;
                 finalSubagent = currentSubagent;
+                const advanceCallForTrace = [...(stageOutput.toolCalls || []), ...collectedToolCalls]
+                    .reverse()
+                    .find((call: any) => call?.name === 'avancar_etapa');
+                const stageAfterForTrace = stageOutput.avancou === true
+                    ? String((advanceCallForTrace?.args as any)?.etapa_destino || (advanceCallForTrace?.result as any)?.etapa_destino || '').trim() || null
+                    : currentStage;
+                emitDebugLlmTrace(runtimeConfig.env, {
+                    trace_type: 'agenthub_llm_forensic_trace',
+                    hop,
+                    stage: currentSubagent,
+                    stage_before: currentStage,
+                    stage_after: stageAfterForTrace,
+                    trigger: hop === 0 ? (payload.trigger ?? 'whatsapp_inbound') : 'stage_handoff',
+                    lead_id: payload.lead_id,
+                    tenant_id: payload.tenant_id,
+                    subagent_trace: stageOutput.llmTrace || null,
+                    regeneration_llm_trace: stageOutput.regenerationLlmTrace || null,
+                    processAction: stageOutput.processAction || null,
+                    pendingCriterion: stageOutput.pendingCriterionAfter || null,
+                    pendingCriterionBefore: stageOutput.pendingCriterionBefore || null,
+                    pendingCriterionAfter: stageOutput.pendingCriterionAfter || null,
+                    responseContract: {
+                        processAction: stageOutput.processAction || null,
+                        conversationalBehavior: stageOutput.conversationalBehavior || null,
+                        allowedIntent: stageOutput.allowedIntent || null,
+                        speakableFacts: stageOutput.speakableFacts || null,
+                        pendingCriterionBefore: stageOutput.pendingCriterionBefore || null,
+                        pendingCriterionAfter: stageOutput.pendingCriterionAfter || null,
+                    },
+                    conversationalBehavior: stageOutput.conversationalBehavior || null,
+                    allowedIntent: stageOutput.allowedIntent || null,
+                    speakableFacts: stageOutput.speakableFacts || null,
+                    model: stageOutput.llmTrace?.model || stageOutput.regenerationLlmTrace?.model || null,
+                    effective_temperature: stageOutput.llmTrace?.effective_temperature || stageOutput.regenerationLlmTrace?.effective_temperature || null,
+                    first_raw_output: stageOutput.rawModelOutput || stageOutput.llmTrace?.first_raw_output || null,
+                    guard_result: {
+                        personality_guard_triggered: stageOutput.personalityGuardTriggered === true,
+                        final_personality_valid: stageOutput.finalPersonalityValid !== false,
+                        flow_narration_detected: stageOutput.flowNarrationDetected === true,
+                        repeated_fact_detected: stageOutput.repeatedFactDetected === true,
+                        ungrounded_output_detected: stageOutput.ungroundedOutputDetected === true,
+                        unauthorized_stage_fact_detected: stageOutput.unauthorizedStageFactDetected === true,
+                    },
+                    violations: stageOutput.personalityViolations || stageOutput.forbiddenTopicsDetected || [],
+                    guard_runs: stageOutput.guardRuns || [],
+                    regeneration_context: stageOutput.regenerationLlmTrace?.regeneration_context || null,
+                    regeneration_output: stageOutput.regeneratedOutput || stageOutput.regenerationLlmTrace?.regeneration_output || null,
+                    final_output: stageOutput.text || null,
+                    tool_results: stageOutput.toolCalls || [],
+                    deterministic_reply_used: stageOutput.deterministicReplyUsed === true,
+                    fallback_used: stageOutput.fallbackUsed === true,
+                    fallback_reason: stageOutput.fallbackReason || null,
+                });
                 console.log(`[ai-processor] stage ${currentSubagent} tool_calls=${(stageOutput.toolCalls ?? []).map((call: any) => call.name).join(',') || 'none'} avancou=${stageOutput.avancou} handoff=${stageOutput.handoff}`);
                 await logLeadRuntimeEvent({
                     supabase,
@@ -3882,6 +4134,10 @@ serve(async (req) => {
                         regeneration_triggered: stageOutput.regenerationTriggered === true,
                         original_output: stageOutput.originalOutput || null,
                         regenerated_output: stageOutput.regeneratedOutput || null,
+                        sanitizer_applied: stageOutput.sanitizerApplied === true,
+                        sanitizer_reason: stageOutput.sanitizerReason || null,
+                        sanitizer_before: stageOutput.sanitizerBefore || null,
+                        sanitizer_after: stageOutput.sanitizerAfter || null,
                         personality_guard_triggered: stageOutput.personalityGuardTriggered === true,
                         personality_violations: stageOutput.personalityViolations || [],
                         flow_narration_detected: stageOutput.flowNarrationDetected === true,
@@ -3940,7 +4196,14 @@ serve(async (req) => {
                 }).catch(() => {});
                 currentStage = nextStage;
                 currentSubagent = routeByEtapa(nextStage);
-                if (nextStage === 'E3') {
+                if (nextStage === 'E2') {
+                    const { data: handoffLeadSnapshot, error: handoffReadError } = await supabase
+                        .from('leads').select('*').eq('id', payload.lead_id).single();
+                    if (handoffReadError) throw handoffReadError;
+                    Object.assign(leadSnapshot, handoffLeadSnapshot);
+                    continue;
+                }
+                if (nextStage === 'E3' || nextStage === 'E4') {
                     continue;
                 }
                 break;
@@ -3949,6 +4212,9 @@ serve(async (req) => {
             out = {
                 text: (() => {
                     const uniqueStages = Array.from(new Set(collectedTexts.map((item) => item.stage)));
+                    if (uniqueStages.length === 2 && uniqueStages[0] === 'E1' && uniqueStages[1] === 'E2') {
+                        return collectedTexts.map((item) => item.text).filter(Boolean).join('\n\n');
+                    }
                     if (uniqueStages.length > 1) {
                         return collectedTexts.slice(-1)[0]?.text || '';
                     }
@@ -3989,7 +4255,9 @@ serve(async (req) => {
                 guardRuns: lastOutput?.guardRuns || [],
                 finalOutputSource: lastOutput?.finalOutputSource || 'raw_model',
                 finalPersonalityValid: lastOutput?.finalPersonalityValid !== false,
-                atomicMessages: Array.isArray(lastOutput?.atomicMessages) ? lastOutput.atomicMessages : null,
+                atomicMessages: collectedTexts.length === 2 && collectedTexts[0].stage === 'E1' && collectedTexts[1].stage === 'E2'
+                    ? collectedTexts.map((item) => item.text).filter(Boolean)
+                    : Array.isArray(lastOutput?.atomicMessages) ? lastOutput.atomicMessages : null,
                 institutionalClaimsPending: Array.isArray(lastOutput?.institutionalClaimsPending) ? lastOutput.institutionalClaimsPending : [],
             };
         }
@@ -3997,7 +4265,11 @@ serve(async (req) => {
         console.log(`[ai-processor] subagente concluiu — text: ${!!out.text}, iterations: ${out.iterations}, handoff: ${out.handoff}`);
 
         if (out.text) {
-            const validatedOutbound = validateOutboundText(out.text);
+            const isE3Presentation = finalSubagent === 'E3'
+                && String(out.processAction || '').trim() === 'present_e3_structured_blocks';
+            const validatedOutbound = isE3Presentation
+                ? { text: out.text, changed: false, reasons: [] as string[] }
+                : validateOutboundText(out.text);
             if (validatedOutbound.changed) {
                 console.warn('[ai-processor] validador final de saida ajustou a mensagem antes do envio');
                 out.text = validatedOutbound.text;
@@ -4105,6 +4377,10 @@ serve(async (req) => {
                     regeneration_triggered: out.regenerationTriggered === true,
                     original_output: out.originalOutput || null,
                     regenerated_output: out.regeneratedOutput || null,
+                    sanitizer_applied: out.sanitizerApplied === true,
+                    sanitizer_reason: out.sanitizerReason || null,
+                    sanitizer_before: out.sanitizerBefore || null,
+                    sanitizer_after: out.sanitizerAfter || null,
                     atomic_messages: Array.isArray(out.atomicMessages) ? out.atomicMessages : null,
                     institutional_claims_pending: Array.isArray(out.institutionalClaimsPending) ? out.institutionalClaimsPending : [],
                     personality_guard_triggered: out.personalityGuardTriggered === true,
@@ -4132,9 +4408,14 @@ serve(async (req) => {
             if (Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0) {
                 const atomicText = out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean).join('\n\n');
                 if (normalizeText(atomicText) !== normalizeText(out.text)) {
-                    out.atomicMessages = finalSubagent === 'E3'
-                        ? splitValidatedE3Blocks(out.text)
-                        : [out.text];
+                    const preserveValidatedE3Presentation = finalSubagent === 'E3'
+                        && String(out.processAction || '').trim() === 'present_e3_structured_blocks'
+                        && out.atomicMessages.length === 4;
+                    if (!preserveValidatedE3Presentation) {
+                        out.atomicMessages = finalSubagent === 'E3'
+                            ? splitValidatedE3Blocks(out.text)
+                            : [out.text];
+                    }
                 }
             }
             if (
@@ -4142,7 +4423,7 @@ serve(async (req) => {
                 && String(out.processAction || '').trim() !== 'answer_e3_specific_question'
             ) {
                 const e3Blocks = splitValidatedE3Blocks(out.text);
-                if (e3Blocks.length === 3) {
+                if ([3, 4].includes(e3Blocks.length)) {
                     out.atomicMessages = e3Blocks;
                 }
             }
@@ -4171,7 +4452,7 @@ serve(async (req) => {
                     iteracoes: out.iterations,
                     tool_calls: out.toolCalls ?? [],
                     skip_takeover: out.skipTakeoverSend === true,
-                    skip_governance: outboundParts.length > 1,
+                    skip_governance: outboundParts.length > 1 || (finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks'),
                     final_output_source: out.finalOutputSource || out.responseOrigin || 'raw_model',
                 }),
                 });
@@ -4296,7 +4577,7 @@ serve(async (req) => {
         const etapasAtivas = ['E1','E2','E3','E4','E5','E6'];
         const { data: finalLeadStageData } = await supabase
             .from('leads')
-            .select('nome, curso_interesse, dor_principal, etapa_atual')
+            .select('nome, curso_interesse, dor_principal, etapa_atual, sales_context')
             .eq('id', payload.lead_id)
             .single();
         const finalLeadStage = finalLeadStageData?.etapa_atual ?? currentStage ?? payload.etapa_atual;
@@ -4307,7 +4588,25 @@ serve(async (req) => {
                 .eq('lead_id', payload.lead_id)
                 .eq('status', 'pending');
 
-            let scheduleAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+            const finalSalesContext = { ...(finalLeadStageData?.sales_context || {}) } as Record<string, unknown>;
+            const e4ProposalNegotiationOpen = finalLeadStage === 'E4'
+                && finalSalesContext.proposal_checkpoint_completed === true
+                && finalSalesContext.enrollment_checkpoint_completed !== true;
+
+            if (e4ProposalFollowupContext) {
+                await scheduleE4ProposalCommitmentFollowup({
+                    supabase,
+                    tenantId: payload.tenant_id,
+                    leadId: payload.lead_id,
+                    context: e4ProposalFollowupContext,
+                });
+                await mergeLeadSalesContext(supabase, payload.lead_id, {
+                    e4_proposal_followup_scheduled: true,
+                    e4_proposal_followup_scheduled_at: new Date().toISOString(),
+                });
+                console.log(`[ai-processor] follow-up de compromisso E4 agendado p/ ${String(e4ProposalFollowupContext.response_deadline)}`);
+            } else if (!e4ProposalNegotiationOpen) {
+                let scheduleAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
             // Ajusta para horário comercial se configurado
             const bh = runtimeConfig.businessHours;
@@ -4344,7 +4643,8 @@ serve(async (req) => {
                     status: 'pending',
                 }, { onConflict: 'lead_id,attempt', ignoreDuplicates: false });
 
-            console.log(`[ai-processor] follow-up #1 agendado p/ lead ${payload.lead_id} em ${scheduleAt}`);
+                console.log(`[ai-processor] follow-up #1 agendado p/ lead ${payload.lead_id} em ${scheduleAt}`);
+            }
         }
 
         if (msg?.msg_id) {

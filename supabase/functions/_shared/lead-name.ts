@@ -4,14 +4,25 @@
 
 function normalize(text: string) {
   return String(text || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/Ã£/g, 'ã')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã¢/g, 'â')
+    .replace(/Ãª/g, 'ê')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ãµ/g, 'õ')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã§/g, 'ç')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function normalizeSoft(text: string) {
-  return normalize(text).toLowerCase();
+  return normalize(text)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 const GENERIC_NON_PERSON_TOKENS = new Set([
@@ -44,6 +55,7 @@ const GENERIC_NON_PERSON_TOKENS = new Set([
   'estetica',
   'esteticista',
   'financeiro',
+  'fapps',
   'fonoaudiologa',
   'fonoaudiologo',
   'gerente',
@@ -53,6 +65,8 @@ const GENERIC_NON_PERSON_TOKENS = new Set([
   'medica',
   'medico',
   'nutricionista',
+  'numero',
+  'número',
   'odontologa',
   'odontologo',
   'paciente',
@@ -89,6 +103,30 @@ function cleanCandidate(raw: string) {
     .trim();
 }
 
+function extractExplicitNameCandidate(raw: string) {
+  const cleaned = cleanCandidate(raw);
+  const normalized = normalizeSoft(cleaned);
+  if (!cleaned || !normalized) return cleaned;
+
+  if (/^meu nome (e|eh) /.test(normalized)) {
+    return cleaned.split(/\s+/).slice(3).join(' ').trim();
+  }
+
+  if (/^me chamo /.test(normalized)) {
+    return cleaned.split(/\s+/).slice(2).join(' ').trim();
+  }
+
+  if (/^sou (de|do|da|dos|das)\b/.test(normalized)) {
+    return cleaned;
+  }
+
+  if (/^sou /.test(normalized)) {
+    return cleaned.split(/\s+/).slice(1).join(' ').trim();
+  }
+
+  return cleaned;
+}
+
 function looksLikeNonPersonLabel(candidate: string) {
   const normalized = normalizeSoft(candidate);
   if (!normalized) return true;
@@ -113,8 +151,24 @@ function looksLikeNonPersonLabel(candidate: string) {
   const roleWordCount = words.filter((word) => GENERIC_NON_PERSON_TOKENS.has(word)).length;
   if (roleWordCount >= 1 && words.length <= 2) return true;
   if (roleWordCount >= 2) return true;
+  if (/^(sou|moro|resido) (de|do|da|dos|das|em)\b/.test(normalized)) return true;
+  if (words.length > 1 && words.some((word) => [
+    'quero',
+    'saber',
+    'curso',
+    'graduacao',
+    'faculdade',
+    'universidade',
+    'valor',
+    'mensalidade',
+    'bolsa',
+    'informacao',
+    'informacoes',
+  ].includes(word))) return true;
+  if (words.includes('helton')) return true;
+  if (normalized.includes('numero de teste') || normalized.includes('número de teste')) return true;
 
-  if (!words.every((word) => /^[a-zA-ZÀ-ÿ'-]+$/.test(word))) return true;
+  if (!words.every((word) => /^[\p{L}'-]+$/u.test(word))) return true;
   return false;
 }
 
@@ -159,12 +213,14 @@ export function extractFirstName(personName: string | null | undefined) {
 }
 
 export function resolveTrustedLeadName(params: {
+  explicitName?: string | null;
   verifiedName?: string | null;
   pushName?: string | null;
   notifyName?: string | null;
   existingTrustedName?: string | null;
 }) {
   const candidates = [
+    { source: 'explicit_name', raw: extractExplicitNameCandidate(String(params.explicitName || '').trim()) },
     { source: 'verified_name', raw: String(params.verifiedName || '').trim() },
     { source: 'push_name', raw: String(params.pushName || '').trim() },
     { source: 'notify_name', raw: String(params.notifyName || '').trim() },
@@ -172,7 +228,7 @@ export function resolveTrustedLeadName(params: {
 
   for (const candidate of candidates) {
     const evaluated = evaluateConfidence(candidate.raw);
-    if (evaluated.confidence === 'trusted') {
+    if (evaluated.confidence === 'trusted' || (candidate.source === 'explicit_name' && evaluated.confidence === 'uncertain')) {
       return {
         rawContactName: candidate.raw,
         leadPersonName: evaluated.cleaned,
@@ -197,7 +253,8 @@ export function resolveTrustedLeadName(params: {
     }
   }
 
-  const existingTrustedName = titleCaseName(String(params.existingTrustedName || ''));
+  const existingCandidate = titleCaseName(String(params.existingTrustedName || ''));
+  const existingTrustedName = looksLikeNonPersonLabel(existingCandidate) ? '' : existingCandidate;
   return {
     rawContactName: candidates[0]?.raw || null,
     leadPersonName: existingTrustedName || null,

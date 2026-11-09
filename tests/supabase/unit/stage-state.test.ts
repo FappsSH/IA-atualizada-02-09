@@ -424,6 +424,80 @@ describe('stage state classification', () => {
         expect(derivePendingCriterion({ stage: 'E2', leadSnapshot: patchedLeadSnapshot, history: [] })).toBe('vaccine_decider');
     });
 
+    it('resolve resposta natural sobre o ponto que mais agradou depois da apresentacao E3', () => {
+        const result = classifyInboundAgainstStageState({
+            stage: 'E3',
+            leadSnapshot: {
+                sales_context: {
+                    e3_presentation_complete: true,
+                    e3_interest_signal_captured: false,
+                    pending_criterion: 'interest_signal',
+                    last_agent_question_type: 'interest_signal',
+                },
+            },
+            history: [
+                { role: 'assistant', content: 'Pensando em tudo que eu te apresentei, o que mais chamou sua atencao e mais fez sentido pra voce?' },
+            ],
+            latestUserMessage: 'Que posso assistir as aulas de onde eu estiver',
+        });
+
+        expect(result.classificationReason).toBe('resolved_pending_e3_interest_signal');
+        expect(result.statePatch.e3_interest_signal_captured).toBe(true);
+    });
+
+    it('resolve nao tenho quando a E3 acabou de perguntar se ainda existe duvida', () => {
+        const result = classifyInboundAgainstStageState({
+            stage: 'E3',
+            leadSnapshot: {
+                sales_context: {
+                    e3_presentation_complete: true,
+                    e3_interest_signal_captured: false,
+                    pending_criterion: 'interest_signal',
+                    last_agent_question_type: 'interest_signal',
+                },
+            },
+            history: [
+                { role: 'assistant', content: 'Se tiver mais alguma duvida sobre o curso, pode me perguntar.' },
+            ],
+            latestUserMessage: 'Nao tenho',
+        });
+
+        expect(result.classificationReason).toBe('resolved_pending_e3_interest_signal');
+        expect(result.statePatch.e3_interest_signal_captured).toBe(true);
+    });
+
+    it('mantem duvida ou objecao real dentro da E3', () => {
+        const leadSnapshot = {
+            sales_context: {
+                e3_presentation_complete: true,
+                e3_interest_signal_captured: false,
+                pending_criterion: 'interest_signal',
+                last_agent_question_type: 'interest_signal',
+            },
+        };
+        const history = [
+            { role: 'assistant', content: 'O que mais chamou sua atencao e mais fez sentido pra voce?' },
+        ];
+
+        const doubt = classifyInboundAgainstStageState({
+            stage: 'E3',
+            leadSnapshot,
+            history,
+            latestUserMessage: 'As aulas acontecem todos os dias?',
+        });
+        const objection = classifyInboundAgainstStageState({
+            stage: 'E3',
+            leadSnapshot,
+            history,
+            latestUserMessage: 'Achei cinco anos muito tempo',
+        });
+
+        expect(doubt.classificationReason).toBe('no_context_match');
+        expect(doubt.statePatch).toEqual({});
+        expect(objection.classificationReason).toBe('no_context_match');
+        expect(objection.statePatch).toEqual({});
+    });
+
     it('usa area oficial do catalogo ao resolver selecao de area', () => {
         const result = classifyInboundAgainstStageState({
             stage: 'E1',
@@ -462,5 +536,61 @@ describe('stage state classification', () => {
         expect(result.classification).toBe('contextual_response');
         expect(result.classificationReason).toBe('resolved_pending_referral_name');
         expect(result.statePatch.pending_indication_name).toBe('Joao Pereira');
+    });
+
+    it('separa satisfacao e recomendacao em E6', () => {
+        const satisfaction = classifyInboundAgainstStageState({
+            stage: 'E6',
+            leadSnapshot: { sales_context: {} },
+            history: [{ role: 'assistant', content: 'Voce gostou do atendimento?' }],
+            latestUserMessage: 'Sim, gostei bastante',
+        });
+
+        expect(satisfaction.classificationReason).toBe('resolved_pending_service_satisfaction');
+        expect(satisfaction.statePatch).toMatchObject({
+            e6_satisfaction_collected: true,
+            e6_satisfaction_positive: true,
+            e6_feedback_collected: false,
+            pending_criterion: 'service_recommendation',
+        });
+
+        const recommendation = classifyInboundAgainstStageState({
+            stage: 'E6',
+            leadSnapshot: {
+                sales_context: {
+                    e6_satisfaction_collected: true,
+                    e6_satisfaction_positive: true,
+                    e6_feedback_collected: false,
+                },
+            },
+            history: [{ role: 'assistant', content: 'Voce recomendaria esse atendimento para outra pessoa?' }],
+            latestUserMessage: 'Com certeza',
+        });
+
+        expect(recommendation.classificationReason).toBe('resolved_pending_referral_decision');
+        expect(recommendation.statePatch).toMatchObject({
+            e6_feedback_collected: true,
+            e6_recommended_service: true,
+            pending_criterion: 'referral_name',
+        });
+    });
+
+    it('nao confunde confirmacao com nome de indicado', () => {
+        const result = classifyInboundAgainstStageState({
+            stage: 'E6',
+            leadSnapshot: {
+                sales_context: {
+                    e6_satisfaction_collected: true,
+                    e6_feedback_collected: true,
+                    e6_recommended_service: true,
+                    pending_indication_name: '',
+                },
+            },
+            history: [{ role: 'assistant', content: 'Me passa primeiro o nome dessa pessoa.' }],
+            latestUserMessage: 'Sim',
+        });
+
+        expect(result.classificationReason).not.toBe('resolved_pending_referral_name');
+        expect(result.statePatch).not.toHaveProperty('pending_indication_name');
     });
 });

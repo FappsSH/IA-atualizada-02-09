@@ -181,20 +181,23 @@ export function detectEarlyStageCourseLineLeak(params: {
     .map((pattern) => `early_stage_course_detail_violation:${normalizeText(pattern)}`);
 }
 
+// Legacy fallback builders are intentionally disabled for commercial replies.
+// Normal flow must use LLM + PERSONALITY; violations return structured guard data.
+// Empty return keeps old imports safe and marks this path as technical_failure-only.
 export function buildE1AskCityFallback(course: string) {
-  const courseLabel = String(course || 'esse curso').trim();
-  return `${courseLabel} faz bastante sentido para muita gente que busca esse caminho.\n\nMe diz so de qual cidade voce fala?`;
+  void course;
+  return '';
 }
 
 export function buildE1AskMotivationFallback(course: string) {
-  const courseLabel = String(course || 'esse curso').trim();
-  return `Faz sentido voce olhar para ${courseLabel}.\n\nAgora me conta: voce ja trabalha na area ou isso representa um sonho ou objetivo pessoal para voce?`;
+  void course;
+  return '';
 }
 
 export function buildE2AvailabilityFallback() {
-  return 'Antes de eu seguir, preciso alinhar uma coisa com voce.\n\nTem alguma viagem mais longa ou mudanca planejada que possa atrapalhar seu inicio?';
+  return '';
 }
 
 export function buildE2DecisionFallback() {
-  return 'Perfeito.\n\nNuma decisao como essa, voce costuma decidir sozinho ou conversa com alguem antes?';
+  return '';
 }

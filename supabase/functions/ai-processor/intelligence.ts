@@ -322,7 +322,7 @@ export async function persistLeadIntelligence(params: {
     updated_at: now,
   };
 
-  if (params.intelligence.proposal_ready && !params.currentLead?.proposta_enviada_em) {
+  if (params.intelligence.proposal_ready && !params.intelligence.asked_price_early && !params.currentLead?.proposta_enviada_em) {
     updatePayload.proposta_enviada_em = now;
   }
   if (params.intelligence.enrollment_ready && !params.currentLead?.pronto_matricula_em) {

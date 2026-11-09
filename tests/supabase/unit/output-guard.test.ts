@@ -67,6 +67,19 @@ describe('personality output guard', () => {
     expect(result.personality_violations).toContain('repeated_resolved_criterion:vaccine_decider');
   });
 
+  it('aceita reacao ao terceiro decisor antes do combinado mesmo com transicao natural', () => {
+    const result = detectPersonalityOutputViolations({
+      stage: 'E2',
+      text: 'Perfeito, conversa com ele sim e se surgir alguma duvida especifica pode me enviar.\n\nAgora, depois que eu apresentar o curso, se nao fizer sentido ou nao encaixar no seu orcamento, voce pode me dar um nao sincero e esta tudo bem. Mas se fizer sentido e a bolsa de estudos ficar boa, seguimos para sua inscricao e garantimos essa oportunidade. Combinado?',
+      latestUserMessage: 'Converso com meu marido',
+      processAction: 'ask_vaccine_agreement',
+      courseStatus: 'confirmed_available',
+    });
+
+    expect(result.personality_violations).not.toContain('e2_forbidden_preamble');
+    expect(result.personality_violations).not.toContain('missing_third_party_decider_acknowledgement');
+  });
+
   it('detecta mencao desnecessaria de linha unica na E1', () => {
     const result = detectPersonalityOutputViolations({
       stage: 'E1',

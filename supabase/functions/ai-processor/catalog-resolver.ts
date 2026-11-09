@@ -110,13 +110,6 @@ function looksLikeCityReply(message: string) {
 
   const words = normalized.split(' ').filter(Boolean);
   if (words.length === 0 || words.length > 4) return false;
-  const knownDirectCities = new Set([
-    'porto velho',
-    'vilhena',
-    'cacoal',
-    'ji parana',
-    'ariquemes',
-  ]);
 
   const blockedPhrases = new Set([
     'na minha',
@@ -135,8 +128,7 @@ function looksLikeCityReply(message: string) {
     normalized.startsWith('moro em ') ||
     normalized.startsWith('resido em ') ||
     normalized.startsWith('sou do ') ||
-    normalized.startsWith('sou da ') ||
-    knownDirectCities.has(normalized)
+    normalized.startsWith('sou da ')
   ) {
     return true;
   }
@@ -193,8 +185,6 @@ function looksLikeCityReply(message: string) {
   ].includes(word));
   if (hasCatalogVerb) return false;
 
-  if (words.length === 1) return false;
-
   return true;
 }
 
@@ -209,11 +199,23 @@ function looksLikeMotivationReply(message: string) {
     'e um sonho',
     'objetivo',
     'gosto da area',
+    'gosto da área',
+    'gosto muito da area',
+    'gosto muito da área',
+    'me identifico com a area',
+    'me identifico com a área',
+    'afinidade com a area',
+    'afinidade com a área',
     'quero crescer',
     'quero migrar',
     'recebi uma oportunidade',
     'ja trabalho',
     'trabalho na area',
+    'nao trabalho',
+    'não trabalho',
+    'nunca trabalhei',
+    'ainda nao trabalho',
+    'ainda não trabalho',
   ].some((pattern) => normalized.includes(pattern));
 }
 
@@ -313,6 +315,10 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
     'sim',
     'nao',
     'talvez',
+    'ja disse',
+    'já disse',
+    'eu ja disse',
+    'eu já disse',
     'quero saber',
     'tenho interesse',
     'quero fazer',

@@ -91,7 +91,7 @@ serve(async (_req) => {
             // Verifica se o lead ainda está ativo
             const { data: lead } = await supabase
                 .from('leads')
-                .select('id, nome, telefone, etapa_atual, curso_interesse, dor_principal, bloqueado')
+                .select('id, nome, telefone, etapa_atual, curso_interesse, dor_principal, sales_context, bloqueado')
                 .eq('id', schedule.lead_id)
                 .maybeSingle();
 
@@ -152,15 +152,22 @@ async function logFollowup(supabase: any, schedule: any, lead: any, status: stri
     } catch (_) {}
 }
 
-const nome = lead.nome ?? 'Lead';
+            const nome = lead.nome ?? 'Lead';
             const etapaNome = schedule.last_context?.etapa_atual ?? lead.etapa_atual;
             const curso = lead.curso_interesse ?? 'não informado';
             const dor = lead.dor_principal ?? 'não identificada';
+            const isE4ProposalCommitment = schedule.trigger_reason === 'e4_proposal_commitment';
+            const proposalContext = { ...(schedule.last_context || {}), ...(lead.sales_context || {}) } as Record<string, unknown>;
+            const proposalMotivation = String(proposalContext.motivation || proposalContext.motivacao_principal || dor || '').trim();
+            const decisionParticipant = String(proposalContext.decision_participant || proposalContext.e2_decision_participant || '').trim();
+            const decisionAnswer = String(proposalContext.decision_answer || proposalContext.e2_vaccine_decider_answer || '').trim();
 
             // Monta prompt para geração do follow-up
             const systemPrompt = `
 Você é o agente comercial da Universidade Cruzeiro do Sul e atua como especialista de carreiras.
-Você está retomando contato com um lead que parou de responder.
+${isE4ProposalCommitment
+    ? 'A proposta ja foi enviada e o lead tinha combinado uma resposta ate o fim do dia.'
+    : 'Você está retomando contato com um lead que parou de responder.'}
 ${personality || 'Seja humano, objetivo e alinhado ao processo comercial. Use mensagens curtas e com boa quebra de linha.'}
 ${buildGovernanceTagsPrompt(runtimeConfig.messagePolicy)}
 
@@ -170,6 +177,7 @@ CONTEXTO DO LEAD:
 - Curso de interesse: ${curso}
 - Dor principal: ${dor}
 - Tentativa de follow-up #${schedule.attempt} de ${schedule.max_attempts}
+${isE4ProposalCommitment ? `- Proposta ja enviada: sim\n- Motivo confirmado: ${proposalMotivation || 'nao informado'}\n- Contexto da decisao: ${decisionAnswer || decisionParticipant || 'nao informado'}` : ''}
 
 HISTÓRICO DA CONVERSA:
 ${historyText || '(histórico vazio)'}
@@ -182,13 +190,15 @@ INSTRUÇÕES:
 2. NÃO repita nenhuma das mensagens anteriores listadas acima.
 3. Seja contextual — retome de onde parou, mencione o assunto anterior.
 4. Não use emojis. Não use jargões de vendedor.
-5. A abordagem muda conforme a tentativa:
-   - Tentativa 1 (30min): leve, como se estivesse curioso — "só passando pra ver se conseguiu ver a mensagem"
+5. ${isE4ProposalCommitment
+    ? 'Retome somente a decisao sobre a proposta enviada. Conecte a mensagem ao motivo real e, quando houver, ao contexto real de quem participa da decisao. Nao reapresente o curso, nao diga que vai preparar, enviar, atualizar ou consultar proposta, nao mencione administrativo e nao invente valores ou condicoes.'
+    : 'A abordagem muda conforme a tentativa:'}
+${isE4ProposalCommitment ? '' : `   - Tentativa 1 (30min): leve, como se estivesse curioso — "só passando pra ver se conseguiu ver a mensagem"
    - Tentativa 2 (1h): reforça valor — "lembrei de um ponto importante que não mencionei"
    - Tentativa 3 (3h): novo ângulo — aborda benefício diferente
    - Tentativa 4 (24h): mais direto — "a bolsa ainda está disponível, mas o prazo está acabando"
    - Tentativa 5 (48h): último esforço — "não quero ser chato, mas queria muito te ajudar nessa"
-   - Tentativa 6 (72h): última tentativa — "se ainda tiver interesse, é só responder"
+   - Tentativa 6 (72h): última tentativa — "se ainda tiver interesse, é só responder"`}
 6. Gere APENAS o texto da mensagem, sem aspas, sem labels.
 `.trim();
 
@@ -252,6 +262,22 @@ INSTRUÇÕES:
                 ...sentMessages,
                 { text: followupText, attempt: schedule.attempt, sent_at: new Date().toISOString() },
             ];
+
+            if (isE4ProposalCommitment) {
+                await supabase
+                    .from('followup_schedule')
+                    .update({
+                        status: 'sent',
+                        sent_at: new Date().toISOString(),
+                        sent_messages: updatedSent,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', schedule.id);
+                await logFollowup(supabase, schedule, lead, 'processed');
+                console.log(`[followup-worker] retorno de proposta E4 enviado para lead ${lead.id}`);
+                processed++;
+                continue;
+            }
 
             if (schedule.attempt < schedule.max_attempts) {
                 const nextAttempt = schedule.attempt + 1;

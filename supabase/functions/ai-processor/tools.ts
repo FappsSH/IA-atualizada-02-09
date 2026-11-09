@@ -35,9 +35,18 @@ function normalizeCourseText(text: string) {
         .trim();
 }
 
+function stripCourseLookupIntentPrefix(text: string) {
+    return normalizeCourseText(text)
+        .replace(
+            /^(?:quanto\s+(?:esta|custa|fica)|qual\s+(?:e\s+)?o\s+valor(?:\s+da\s+mensalidade)?|qual\s+a\s+mensalidade|valor|mensalidade)(?:\s+(?:do|da|de|o|a))?(?:\s*(?:curso|graduacao|faculdade))?(?:\s+(?:do|da|de))?\s+/,
+            '',
+        )
+        .trim();
+}
+
 function buildSpecificCourseQueryVariants(query: string) {
     const normalized = normalizeCourseText(query);
-    const simplified = normalized
+    const simplified = stripCourseLookupIntentPrefix(normalized)
         .replace(/\baudio transcrito\b/g, ' ')
         .replace(/\b(quero saber sobre|quero fazer|tenho interesse em|estou pensando em|quero informacoes de|queria informacoes de|informacoes de|curso de|graduacao de|faculdade de|tem o curso de|tem curso de|tem)\b/g, ' ')
         .replace(/\b(eu|a|o|as|os|uma|um|voce|voces|nao)\b/g, ' ')
@@ -56,7 +65,9 @@ function uniqueStrings(items: string[]) {
 }
 
 function hasMeaningfulLeadValue(value: unknown) {
-    return String(value || '').trim().length > 0;
+    const normalized = normalizeCourseText(String(value || ''));
+    return normalized.length > 0
+        && !['none', 'null', 'undefined', 'nao informado', 'nao informada', 'sem informacao'].includes(normalized);
 }
 
 function normalizeLineFormation(value: unknown) {
@@ -229,7 +240,7 @@ function extractDegreeHint(query: string) {
 }
 
 function simplifyCourseLookupQuery(query: string) {
-    return normalizeCourseText(query)
+    return stripCourseLookupIntentPrefix(query)
         .replace(/\b(quero saber sobre|quero fazer|tenho interesse em|estou pensando em|quero informacoes de|quero informações de|queria informacoes de|queria informações de|informacoes de|informações de|curso de|tem o curso de|tem curso de|tem)\b/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -577,6 +588,7 @@ function extractCourseSearchTokens(query: string) {
         'saber', 'sobre', 'mais', 'como', 'qual', 'quais', 'na', 'no', 'de', 'da', 'do', 'das', 'dos',
         'um', 'uma', 'pra', 'para', 'com', 'em', 'modalidade', 'duracao', 'duracao', 'area', 'areas',
         'bacharelado', 'licenciatura', 'tecnologo', 'tecnologos', 'ead', 'semipresencial', 'presencial',
+        'quanto', 'esta', 'custa', 'fica', 'valor', 'mensalidade',
     ]);
 
     return uniqueStrings(
@@ -1095,7 +1107,7 @@ export async function tool_atualizar_lead(
 
     if (typeof sanitizedArgs.dor_principal === 'string' && !isAllowedLegacyPain(sanitizedArgs.dor_principal)) {
         const motivation = String(sanitizedArgs.dor_principal || '').trim();
-        if (motivation) {
+        if (hasMeaningfulLeadValue(motivation)) {
             salesContextPatch.motivacao_principal = motivation;
         }
         delete sanitizedArgs.dor_principal;
@@ -1116,9 +1128,16 @@ export async function tool_atualizar_lead(
             .maybeSingle();
 
         if (currentLeadError) throw new Error(`Erro ao ler sales_context: ${currentLeadError.message}`);
+        const currentSalesContext = { ...(currentLead?.sales_context || {}) } as Record<string, unknown>;
+        if (
+            Object.prototype.hasOwnProperty.call(salesContextPatch, 'motivacao_principal')
+            && hasMeaningfulLeadValue(currentSalesContext.motivacao_principal)
+        ) {
+            delete salesContextPatch.motivacao_principal;
+        }
 
         campos.sales_context = {
-            ...(currentLead?.sales_context || {}),
+            ...currentSalesContext,
             ...salesContextPatch,
         };
     }

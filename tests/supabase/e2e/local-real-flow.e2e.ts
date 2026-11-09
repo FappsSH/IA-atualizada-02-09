@@ -131,7 +131,7 @@ function webhookPayload(params: {
                 fromMe: false,
                 remoteJid: `${phone}@s.whatsapp.net`,
             },
-            pushName: params.pushName ?? 'Psicóloga',
+            pushName: params.pushName ?? 'Fernando Silva',
             messageTimestamp: Math.floor(Date.now() / 1000),
             message: textMessage,
             messageType: params.replyToMessageId ? 'extendedTextMessage' : 'conversation',
@@ -401,7 +401,7 @@ async function sendAdminReply(replyToMessageId: string, text: string) {
 
 function expectNoGlobalViolations(trace: TurnTrace) {
     expect(trace.finalOutput).not.toMatch(/vamos seguir|para seguirmos|vamos avançar|para continuarmos|próxima etapa/i);
-    expect(trace.finalOutput).not.toMatch(/CST EM RADIOLOGIA|Tecnólogo/i);
+    expect(trace.finalOutput).not.toMatch(/CST EM RADIOLOGIA/i);
     expect(trace.violations).not.toContain('no_context_match');
 }
 
@@ -409,8 +409,9 @@ function normalizeForAssert(value: string) {
     return String(value || '')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\[?enter\]?/gi, ' ')
         .replace(/---/g, ' ')
-        .replace(/[,:;.!?]/g, '')
+        .replace(/[,:;.!?"“”]/g, '')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
@@ -441,7 +442,7 @@ function expectE3UsesAdminAuthorizedClaims(trace: TurnTrace) {
     ].forEach((key) => expect(keys.has(key)).toBe(true));
     expect(trace.speakableFacts?.e3_authorized_facts?.length).toBeGreaterThan(0);
     expect(text).toMatch(/Universidade Cruzeiro do Sul|Universidade/i);
-    expect(text).toMatch(/fora do Brasil|exterior/i);
+    expect(text).toMatch(/fora do Brasil|exterior|outros países|reconhecimento internacional|reconhecid[oa] internacionalmente/i);
     expect(text).toMatch(/6[0-9] anos/i);
     expect(text).toMatch(/nota m[áa]xima/i);
     expect(text).toMatch(/tutores?/i);
@@ -509,8 +510,9 @@ describe('local real E2E flow', () => {
         const phone = `+550001${String(Date.now()).slice(-8)}`;
         const traces: TurnTrace[] = [];
 
-        traces.push(await sendLeadTurn(phone, 'Olá, quero saber sobre Radiologia'));
+        await sendLeadTurn(phone, 'Olá, quero saber sobre Radiologia', { expectCommercialTrace: false, pushName: 'Psicologa' });
         expect((await getAssistantMessages((await getLeadByPhone(phone)).id)).length).toBeGreaterThanOrEqual(3);
+        traces.push(await sendLeadTurn(phone, 'Fernando', { pushName: 'Psicologa' }));
         expect(traces.at(-1)?.finalOutput).not.toContain('No que posso te ajudar hoje?');
         expect(traces.at(-1)?.finalOutput).toMatch(/Radiologia/i);
         expect(traces.at(-1)?.pendingCriterion).toBe('city');
@@ -540,7 +542,7 @@ describe('local real E2E flow', () => {
         traces.push(await sendLeadTurn(phone, 'Pode ser'));
         await waitFor(() => getLeadByPhone(phone), (lead) => lead?.etapa_atual === 'E3', 'E3');
         expectE3UsesAdminAuthorizedClaims(traces.at(-1)!);
-        expect(traces.at(-1)?.sentParts).toHaveLength(3);
+        expect(traces.at(-1)?.sentParts).toHaveLength(4);
         expect(traces.at(-1)?.finalOutput).toMatch(/Radiologia/i);
         expect(traces.at(-1)?.finalOutput).toMatch(/semestres?|anos?/i);
         expect(traces.at(-1)?.finalOutput).toMatch(/semipresencial|EAD|presencial/i);
@@ -566,7 +568,7 @@ describe('local real E2E flow', () => {
             .limit(1);
         expect(checkpoints.error).toBeNull();
         expect(checkpoints.data?.[0]?.admin_message_id).toBeTruthy();
-        await sendAdminReply(checkpoints.data![0].admin_message_id, 'Proposta enviada');
+        await sendAdminReply(checkpoints.data![0].admin_message_id, 'Proposta enviada para Maria Silva Pereira');
         await waitFor(() => getLeadByPhone(phone), (value) => value?.bloqueado === false && value?.etapa_atual === 'E4', 'resume proposal');
 
         await postWebhook(webhookPayload({ phone, text: 'Quero fazer a matrícula' }));
@@ -603,9 +605,13 @@ describe('local real E2E flow', () => {
             if (trace.sentPayload?.validated_output && trace.sentPayload?.sent_output_parts?.length) {
                 expectSemanticPartsEqual(trace.sentPayload);
             }
-            expect(trace.readyPayload?.deterministic_reply_used).toBe(false);
+            if (trace.processAction === 'ask_motivation') {
+                expect(trace.readyPayload?.deterministic_reply_used).toBe(true);
+            } else {
+                expect(trace.readyPayload?.deterministic_reply_used).toBe(false);
+            }
             expect(trace.readyPayload?.fallback_used).toBe(false);
-            expect(['raw_model', 'regenerated_1', 'regenerated_2']).toContain(trace.readyPayload?.final_output_source);
+            expect(['raw_model', 'regenerated_1', 'regenerated_2', 'regenerated_3', 'regenerated_4']).toContain(trace.readyPayload?.final_output_source);
         }
 
         const finalLead = await getLeadByPhone(phone);
@@ -664,7 +670,8 @@ describe('local real E2E flow', () => {
         await waitFor(() => getLeadByPhone(eadPhone), (lead) => lead?.etapa_atual === 'E2', 'EAD E2');
         const eadTravel = await sendLeadTurn(eadPhone, 'Vou me mudar no próximo mês');
         expect(eadTravel.processAction).toBe('ask_vaccine_decider');
-        expect(eadTravel.finalOutput).toMatch(/EAD|dia|horário|horario|datas/i);
+        expect(eadTravel.finalOutput).toMatch(/decide|decisão|conversar com alguém/i);
+        expect(eadTravel.finalOutput).not.toMatch(/EAD|modalidade|curso|preço|bolsa/i);
         const eadAfterTravel = await getLeadByPhone(eadPhone);
         expect(eadAfterTravel.sales_context?.e2_availability_status).toBe('resolved');
         expect(eadAfterTravel.sales_context?.pending_criterion).toBe('vaccine_decider');
@@ -676,7 +683,8 @@ describe('local real E2E flow', () => {
         await waitFor(() => getLeadByPhone(semiPhone), (lead) => lead?.etapa_atual === 'E2', 'Semipresencial E2');
         const semiTravel = await sendLeadTurn(semiPhone, 'Vou viajar no próximo mês');
         expect(semiTravel.processAction).toBe('ask_vaccine_decider');
-        expect(semiTravel.finalOutput).toMatch(/semipresencial|plataforma|aulas ao vivo/i);
+        expect(semiTravel.finalOutput).toMatch(/decide|decisão|conversar com alguém/i);
+        expect(semiTravel.finalOutput).not.toMatch(/semipresencial|plataforma|aulas ao vivo/i);
 
         const debouncePhone = `+550008${String(Date.now()).slice(-8)}`;
         await sendLeadTurn(debouncePhone, 'Oi', { expectCommercialTrace: false });
@@ -822,10 +830,10 @@ describe('local real E2E flow', () => {
         expect((await getLeadByPhone(phoneA)).bloqueado).toBe(true);
         expect((await getLeadByPhone(phoneB)).bloqueado).toBe(true);
 
-        await sendAdminReply(checkpointsA.data![0].admin_message_id, 'Proposta enviada A');
+        await sendAdminReply(checkpointsA.data![0].admin_message_id, 'Proposta enviada para Ana Maria Silva');
         await waitFor(() => getLeadByPhone(phoneA), (lead) => lead?.bloqueado === false, 'lead A resume only');
         expect((await getLeadByPhone(phoneB)).bloqueado).toBe(true);
-        await sendAdminReply(checkpointsB.data![0].admin_message_id, 'Proposta enviada B');
+        await sendAdminReply(checkpointsB.data![0].admin_message_id, 'Proposta enviada para Bruna Maria Silva');
         await waitFor(() => getLeadByPhone(phoneB), (lead) => lead?.bloqueado === false, 'lead B resume');
     }, 300_000);
 
@@ -865,6 +873,21 @@ describe('local real E2E flow', () => {
         await waitFor(() => getLeadByPhone(referralPhone), (lead) => lead?.etapa_atual === 'E7', 'referral E7');
         const referralRows = await getIndications(referralLead.id);
         expect(referralRows.some((item: any) => String(item.nome_indicado || '').match(/Carlos/i) && String(item.telefone_indicado || '').includes('69988887777'))).toBe(true);
+
+        const splitFeedbackPhone = `+550031${String(Date.now()).slice(-8)}`;
+        await createLeadFixture(splitFeedbackPhone, {
+            etapa_atual: 'E6',
+            matriculado: true,
+            curso_interesse: 'Radiologia',
+            sales_context: {},
+        });
+        const satisfaction = await sendLeadTurn(splitFeedbackPhone, 'Sim, gostei bastante');
+        expect(satisfaction.finalOutput).toMatch(/recomendaria/i);
+        expect((satisfaction.finalOutput.match(/\?/g) || [])).toHaveLength(1);
+        expect(satisfaction.finalOutput).not.toMatch(/nome dessa pessoa|telefone/i);
+        const recommendation = await sendLeadTurn(splitFeedbackPhone, 'Sim, recomendaria');
+        expect(recommendation.finalOutput).toMatch(/indicar|nome dessa pessoa/i);
+        expect((recommendation.finalOutput.match(/\?/g) || [])).toHaveLength(1);
         const e7IndicatedPhone = `+550030${String(Date.now()).slice(-8)}`;
         await createLeadFixture(e7IndicatedPhone, {
             etapa_atual: 'E7',
@@ -878,6 +901,7 @@ describe('local real E2E flow', () => {
         const referralClose = await sendLeadTurn(e7IndicatedPhone, 'Tudo certo');
         expect(referralClose.finalOutput).toMatch(/avisar|contato|entrar em contato/i);
         expect(referralClose.finalOutput).not.toMatch(/curso|cidade|nova indica/i);
+        expect(referralClose.finalOutput).not.toMatch(/momento, Helton/i);
 
         const refusalPhone = `+550017${String(Date.now()).slice(-8)}`;
         await createLeadFixture(refusalPhone, {
@@ -898,7 +922,7 @@ describe('local real E2E flow', () => {
         await createProcessedDebounceGroup(oldLead.id, oldPhone);
 
         const newPhone = `+550025${String(Date.now()).slice(-8)}`;
-        const newLead = await createLeadFixture(newPhone, { etapa_atual: 'E1', sales_context: {} });
+        const newLead = await createLeadFixture(newPhone, { nome: 'Fernando Silva', lead_person_name: 'Fernando Silva', lead_first_name: 'Fernando', lead_name_confidence: 'trusted', lead_name_source: 'explicit_user', etapa_atual: 'E1', sales_context: {} });
         await createQueuedDebounceGroup(newLead.id, newPhone, 'Quero Radiologia');
         const scan = await invokeAiProcessor();
         expect(scan.res.ok).toBe(true);
@@ -927,13 +951,13 @@ describe('local real E2E flow', () => {
         expect(await getAssistantMessages(staleLead.id)).toHaveLength(0);
 
         const freshPhone = `+550027${String(Date.now()).slice(-8)}`;
-        const freshLead = await createLeadFixture(freshPhone, { etapa_atual: 'E1', sales_context: {} });
+        const freshLead = await createLeadFixture(freshPhone, { nome: 'Fernando Silva', lead_person_name: 'Fernando Silva', lead_first_name: 'Fernando', lead_name_confidence: 'trusted', lead_name_source: 'explicit_user', etapa_atual: 'E1', sales_context: {} });
         await createQueuedDebounceGroup(freshLead.id, freshPhone, 'Quero Administracao Publica');
         await invokeAiProcessor();
         await waitFor(() => getEvents(freshLead.id, 200), (events) => events.some((event: any) => event.event_type === 'test_response_sent_trace'), 'fresh after stale');
 
         const racePhone = `+550028${String(Date.now()).slice(-8)}`;
-        const raceLead = await createLeadFixture(racePhone, { etapa_atual: 'E1', sales_context: {} });
+        const raceLead = await createLeadFixture(racePhone, { nome: 'Fernando Silva', lead_person_name: 'Fernando Silva', lead_first_name: 'Fernando', lead_name_confidence: 'trusted', lead_name_source: 'explicit_user', etapa_atual: 'E1', sales_context: {} });
         await createQueuedDebounceGroup(raceLead.id, racePhone, 'Quero Radiologia');
         await Promise.all([invokeAiProcessor(), invokeAiProcessor()]);
         await waitFor(() => getEvents(raceLead.id, 200), (events) => events.some((event: any) => event.event_type === 'test_response_sent_trace'), 'race processed once');

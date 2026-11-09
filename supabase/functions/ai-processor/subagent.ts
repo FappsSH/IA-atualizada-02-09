@@ -10,7 +10,7 @@ import { TOOL_SCHEMAS } from './tool-schemas.ts';
 import { TOOL_IMPL, type ToolContext } from './tools.ts';
 import { fetchKnowledgeItems, getAuthorizedKnowledgeFacts, knowledgeItemsToPrompt } from './knowledge.ts';
 import { detectCatalogIntentWithHistory, detectContextualReplyKind, isMediaPlaceholderMessage } from './catalog-resolver.ts';
-import { classifyInboundAgainstStageState, derivePendingCriterion, getNextE1Criterion, getNextE2Criterion } from './stage-state.ts';
+import { classifyInboundAgainstStageState, derivePendingCriterion, getNextE1Criterion, getNextE2Criterion, looksLikeE3DoubtOrObjection } from './stage-state.ts';
 import { extractFirstName } from '../_shared/lead-name.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
 import { buildE3PresentationMessages } from './e3-presentation.ts';
@@ -89,7 +89,7 @@ FALLBACKS E TEXTOS ESTRUTURAIS
 - mesmo quando a resposta vier de fallback ou regra estrutural, a redacao precisa continuar humana, breve e natural.
 `.trim();
 
-function normalizeMessageText(text: string): string {
+function normalizeMessageText(text: string, preserveAtomicSeparators = false): string {
   if (!text) return text;
   const normalizedParts = text
     .replace(/\n?\s*-{3,}\s*\n?/g, '\n---\n')
@@ -114,7 +114,7 @@ function normalizeMessageText(text: string): string {
     uniqueParts.push(part);
   }
 
-  return uniqueParts.join('\n\n').trim();
+  return uniqueParts.join(preserveAtomicSeparators ? '\n---\n' : '\n\n').trim();
 }
 
 function normalizeSoft(text: string) {
@@ -131,6 +131,8 @@ function assistantHistoryCount(history: Array<{ role?: string; content?: string 
 }
 
 function deriveSpeakableCourseName(currentCourseInterest: string, salesContext: Record<string, unknown>) {
+  const displayName = String(salesContext.course_display_name || '').trim();
+  if (displayName) return getCourseDisplayName(displayName);
   const explicitCourse = String(currentCourseInterest || '').trim();
   if (explicitCourse) return getCourseDisplayName(explicitCourse);
   const fallbackBase = String(salesContext.curso_base_nome || '').trim();
@@ -182,63 +184,48 @@ export function shouldSendInitialE1Opening(params: {
   return false;
 }
 
-function buildInitialE1Opening(leadFirstName: string, greeting: string) {
-  const nameChunk = leadFirstName ? ` ${leadFirstName}` : '';
-  return [
-    `Opa, ${greeting}${nameChunk}!! Eu sou Helton, especialista em carreiras da Universidade Cruzeiro do Sul.`,
-    'É um prazer enorme falar com você!!',
-    'Primeiramente eu quero te parabenizar pela iniciativa em entrar em contato conosco.',
-    'São pessoas como você que fazemos questão de acompanhar!! Meus parabéns.',
-    'No que posso te ajudar hoje?',
-  ].join('\n\n');
+function buildInitialE1Opening(_leadFirstName: string, _greeting: string) {
+  return '';
 }
 
 function buildE1CompletionAcknowledgement(params: {
   latestUserMessage: string;
   courseName: string | null;
 }) {
-  const normalized = normalizeForCourseDetection(params.latestUserMessage || '');
-  const courseChunk = params.courseName ? ` de ${params.courseName}` : '';
-
-  if (normalized.includes('ja trabalho') || normalized.includes('trabalho na area') || normalized.includes('atuo na area')) {
-    return `Que legal saber que voce ja trabalha na area${courseChunk}!`;
+  const normalized = normalizeSoft(params.latestUserMessage);
+  if (normalized.includes('trabalho') || normalized.includes('area') || normalized.includes('atuo')) {
+    return 'Excelente!!';
   }
-
-  if (normalized.includes('sonho') || normalized.includes('objetivo')) {
-    return `Que bonito saber que essa graduacao${courseChunk} faz sentido para voce!`;
+  if (normalized.includes('sonho') || normalized.includes('sempre quis') || normalized.includes('objetivo')) {
+    return 'Que legal!!';
   }
-
-  return 'Perfeito!';
+  if (normalized.includes('gosto') || normalized.includes('identifico') || normalized.includes('afinidade')) {
+    return 'Muito bom!!';
+  }
+  return 'Perfeito!!';
 }
 
-function buildE1ConfirmedAvailableAskCityReply(params: {
+function buildE1ConfirmedAvailableAskCityReply(_params: {
   leadFirstName: string;
   courseName: string | null;
 }) {
-  const courseLabel = String(params.courseName || 'essa graduacao').trim();
-  const nameChunk = params.leadFirstName ? `, ${params.leadFirstName}` : '';
-  return `${courseLabel} e uma escolha excelente${nameChunk}.\n\nMe diz so de qual cidade voce fala?`;
+  return '';
 }
 
 function buildE1AskMotivationReply() {
-  return 'Perfeito!!\n\nAgora me conta: voce ja trabalha na area ou isso e um sonho ou objetivo pessoal para voce?';
+  return 'Perfeito!!\n\nMe conta, você já trabalha nessa área ou essa graduação representa um sonho ou objetivo pessoal pra você?';
 }
 
-function buildE2AgreementReply(params?: { decisionParticipant?: string | null }) {
-  const participant = String(params?.decisionParticipant || '').trim();
-  const participantLabel = (() => {
-    if (!participant) return '';
-    if (participant === 'essa pessoa') return 'essa pessoa';
-    if (['mae', 'mãe', 'esposa', 'namorada', 'filha', 'socia', 'sócia'].includes(participant.toLowerCase())) {
-      return `a sua ${participant}`;
-    }
-    return `o seu ${participant}`;
-  })();
-  const participantAck = participant
-    ? `Excelente!! E se ${participantLabel} tiver qualquer duvida tambem, pode ficar a vontade para me mandar. Vai ser um prazer responder voces.\n\n`
-    : '';
+function buildE2AgreementReply(_params?: { leadFirstName?: string | null; decisionParticipant?: string | null }) {
+  return '';
+}
 
-  return `${participantAck}Deixa eu combinar uma coisa com voce: se nao fizer sentido e nao encaixar no seu bolso o que eu vou te apresentar agora, voce me da um "nao ficou legal pra mim" sincero e continuamos amigos, sem problema.\n\nMas se fizer sentido pra voce e encaixar no seu bolso, garantimos essa oportunidade indo para a inscricao. Combinado?`;
+function buildE2AvailabilityReply(_params?: { leadFirstName?: string | null }) {
+  return '';
+}
+
+function buildE2DecisionReply(_params?: { leadFirstName?: string | null }) {
+  return '';
 }
 
 function normalizeCourseModality(value: unknown) {
@@ -252,33 +239,19 @@ function normalizeCourseModality(value: unknown) {
   return null;
 }
 
-function buildE2TravelMoveReply(params: {
+function buildE2TravelMoveReply(_params: {
   latestUserMessage: string;
   modality?: string | null;
 }) {
-  const modality = normalizeCourseModality(params.modality);
-  const reason = normalizeForCourseDetection(params.latestUserMessage || '').includes('mud')
-    ? 'essa mudanca'
-    : 'essa viagem';
-  const nextQuestion = 'E uma decisao importante assim sobre seus estudos, normalmente voce decide por voce mesmo ou costuma conversar com alguem antes?';
-
-  if (modality === 'ead') {
-    return `Perfeito!! Mesmo com ${reason}, voce consegue estudar tranquilamente, porque o seu curso e EAD.\n\nVoce pode assistir as aulas no dia e no horario que melhor encaixarem na sua rotina. So precisa ficar atento as datas, mas os tutores vao estar te lembrando ao longo do curso.\n\n${nextQuestion}`;
-  }
-
-  if (modality === 'semipresencial') {
-    return `Excelente!! Mesmo com ${reason}, voce consegue continuar estudando normalmente, porque o seu curso e semipresencial.\n\nVoce consegue acompanhar as aulas ao vivo pela plataforma de onde estiver.\n\n${nextQuestion}`;
-  }
-
-  return `Perfeito!! Obrigado por me avisar sobre ${reason}.\n\nEu vou considerar isso com cuidado para te orientar sem inventar nada sobre o funcionamento do curso.\n\n${nextQuestion}`;
+  return '';
 }
 
 function buildE2ConditionalPriceReply() {
-  return 'Perfeito!! Pode ficar a vontade, eu vou fazer questao de te passar o valor.\n\nSo quero te apresentar primeiro o curso e a nossa metodologia, para voce entender direitinho como funciona e, se surgir alguma duvida, eu ja esclareco. Tudo bem assim?';
+  return '';
 }
 
 function sanitizeStageHandoffText(text: string, trigger: string, subagent: Subagent) {
-  if (!text || trigger !== 'stage_handoff' || subagent === 'E1') return text;
+  if (!text || trigger !== 'stage_handoff' || subagent === 'E1' || subagent === 'E3') return text;
 
   const normalized = (value: string) => value
     .toLowerCase()
@@ -316,6 +289,276 @@ function sanitizeStageHandoffText(text: string, trigger: string, subagent: Subag
   return paragraphs.join('\n\n').trim() || text;
 }
 
+function sanitizeE1CompleteStageText(text: string, processAction: string | null | undefined) {
+  if (!text || String(processAction || '').trim() !== 'complete_stage') {
+    return { text, applied: false, reason: null as string | null, before: text, after: text };
+  }
+
+  const normalized = (value: string) => value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const forbiddenPatterns = [
+    'viagem',
+    'viajar',
+    'mudanca',
+    'mudar',
+    'proximos meses',
+    'interferir no inicio',
+    'disponibilidade futura',
+    'documentacao',
+    'matricula',
+    'processo',
+    'proxima etapa',
+    'proximo passo',
+    'deixa eu te perguntar',
+    'tambem quero saber',
+    'me conta',
+    'voce tem',
+    'voce esta pronto',
+    'na e2',
+    'etapa e2',
+    'subagente e2',
+    'vou te ajudar com os passos',
+    'indisponivel',
+    'indispon?vel',
+    'outras areas',
+    'outras ?reas',
+    'outra area',
+    'outra ?rea',
+    'outro curso',
+    'vou verificar',
+    'vou consultar',
+    'vou checar',
+    'vou buscar informacoes',
+    'vou buscar informa??es',
+    'estou verificando',
+    'estou consultando',
+    'estou analisando',
+    'aguarde',
+    'um momento',
+    'so um momento',
+    's? um momento',
+  ];
+
+  const keepSentence = (sentence: string) => {
+    const candidate = sentence.trim();
+    if (!candidate) return false;
+    const value = normalized(candidate);
+    if (candidate.includes('?')) return false;
+    return !forbiddenPatterns.some((pattern) => value.includes(normalized(pattern)));
+  };
+
+  const sanitized = text
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph
+      .split(/(?<=[.!?])\s+/)
+      .filter(keepSentence)
+      .join(' ')
+      .trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+
+  return {
+    text: sanitized,
+    applied: sanitized !== text,
+    reason: sanitized !== text ? 'e1_complete_stage_next_stage_leakage' : null,
+    before: text,
+    after: sanitized,
+  };
+}
+
+function sanitizeE2CurrentCriterionText(text: string | undefined, processAction: string | null | undefined, latestUserMessage: string) {
+  const original = normalizeMessageText(text || '');
+  if (!original) return original;
+
+  const action = String(processAction || '').trim();
+  const latest = normalizeIntentText(latestUserMessage || '');
+  const paragraphs = original.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  if (paragraphs.length === 0) return original;
+
+  if (action === 'ask_vaccine_decider') {
+    const first = normalizeIntentText(paragraphs[0]);
+    const looksLikeTravelNegative = ['nao tenho', 'não tenho', 'ate o momento nao', 'até o momento não'].some((item) => latest.includes(normalizeIntentText(item)));
+    const validatesResolvedTravel = looksLikeTravelNegative
+      && /\b(que bom|legal saber|otimo|perfeito|maravilha)\b/.test(first)
+      && /\b(viagem|viajar|mudanca|mudar)\b/.test(first);
+    if (validatesResolvedTravel && paragraphs.length > 1) {
+      return paragraphs.slice(1).join('\n\n').trim();
+    }
+  }
+
+  if (action === 'ask_vaccine_agreement') {
+    const first = normalizeIntentText(paragraphs[0]);
+    const selfDecision = ['eu mesmo', 'eu mesma', 'sozinho', 'so eu', 'só eu', 'decido'].some((item) => latest.includes(normalizeIntentText(item)));
+    const agreementPreamble = /\b(vamos ao combinado|quero te fazer um combinado|quero fazer um combinado|quero te propor um combinado|posso te fazer um combinado|podemos fazer um combinado)\b/.test(first);
+    if (agreementPreamble && paragraphs.length > 1) {
+      return paragraphs.slice(1).join('\n\n').trim();
+    }
+    const validatesSelfDecision = selfDecision
+      && /\b(perfeito|otimo|legal|show|maravilha)\b/.test(first)
+      && !/\b(nao fizer sentido|nao encaixar|nao ficou legal|combinado)\b/.test(first);
+    if (validatesSelfDecision && paragraphs.length > 1) {
+      return paragraphs.slice(1).join('\n\n').trim();
+    }
+  }
+
+  if (action === 'ask_vaccine_agreement') {
+    return original
+      .replace(/\s*,?\s*que est[aá] dispon[ií]vel na modalidade [^.\n?]+/gi, '')
+      .replace(/\s*,?\s*dispon[ií]vel na modalidade [^.\n?]+/gi, '')
+      .trim();
+  }
+
+  return original;
+}
+
+function promptActionLabel(value: unknown) {
+  const action = String(value || '').trim();
+  if (action === 'vaccine_availability') return 'travel_or_move_availability';
+  if (action === 'vaccine_decider') return 'decision_participant';
+  if (action === 'vaccine_agreement') return 'commercial_agreement';
+  if (action === 'ask_vaccine_availability') return 'ask_travel_or_move_availability';
+  if (action === 'ask_vaccine_decider') return 'ask_decision_participant';
+  if (action === 'ask_vaccine_agreement') return 'present_commercial_agreement';
+  return action;
+}
+
+function promptSafeJson(value: unknown) {
+  return JSON.stringify(value || {}, (_key, currentValue) => {
+    if (typeof currentValue === 'string') return promptActionLabel(currentValue);
+    return currentValue;
+  });
+}
+
+function sanitizeAuthorizedFactForPrompt(fact: Record<string, unknown>) {
+  const allowedKeys = new Set(['claim_key', 'title', 'titulo', 'fact', 'fato', 'content', 'conteudo', 'text', 'texto', 'value', 'valor', 'stage', 'modality', 'modalidade', 'category', 'categoria']);
+  const internalValuePattern = /(comunicacao comercial pode|comunica[cç][aã]o comercial pode|o agente pode|usar esse fato|metadata|instru[cç][aã]o|apresentar como)/i;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fact || {})) {
+    if (!allowedKeys.has(key)) continue;
+    if (typeof value === 'string' && internalValuePattern.test(value)) continue;
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+function sanitizeAuthorizedFactsForPrompt(facts: Array<Record<string, unknown>>) {
+  return (facts || [])
+    .map((fact) => sanitizeAuthorizedFactForPrompt(fact))
+    .filter((fact) => Object.keys(fact).length > 0);
+}
+
+function splitE3AtomicMessages(text: string | undefined) {
+  return normalizeMessageText(text || '', true)
+    .split('\n---\n')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function coerceE3PresentationAtomicMessages(text: string | undefined) {
+  const direct = splitE3AtomicMessages(text);
+  if (direct.length !== 3) return direct;
+
+  const finalParagraphs = direct[2]
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const questionIndex = finalParagraphs.findLastIndex((part) =>
+    part.includes('?')
+    && /(chamou.*atencao|fez sentido|mais gostou|mais sentido|mais chamou)/.test(normalizeIntentText(part))
+  );
+  if (questionIndex <= 0) return direct;
+
+  return [
+    direct[0],
+    direct[1],
+    finalParagraphs.slice(0, questionIndex).join('\n\n'),
+    finalParagraphs.slice(questionIndex).join('\n\n'),
+  ].filter(Boolean);
+}
+
+function extractE3MotivationAnchors(motivation: string) {
+  const ignored = new Set([
+    'sempre', 'mesmo', 'pessoal', 'porque', 'quero', 'queria', 'fazer', 'curso', 'area', 'graduacao', 'sonho', 'objetivo',
+  ]);
+  return [...new Set(
+    normalizeIntentText(motivation)
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 5 && !ignored.has(token))
+      .map((token) => token.slice(0, 4)),
+  )].slice(0, 3);
+}
+
+function validateE3PresentationBlocks(params: {
+  blocks: string[];
+  courseName: string;
+  modality: string;
+  motivation: string;
+  authorizedClaimKeys: string[];
+}) {
+  const blocks = params.blocks.map((block) => normalizeIntentText(block));
+  const violations: string[] = [];
+  if (blocks.length !== 4) return { valid: false, violations: ['invalid_message_count'] };
+
+  const [institution, course, support, question] = blocks;
+  if (!/(universidade|instituicao|cruzeiro|mec|diploma|reconhecimento|anos de mercado|historia)/.test(institution || '')) {
+    violations.push('missing_institution_presentation');
+  }
+  const authorizedClaims = new Set(params.authorizedClaimKeys || []);
+  if (authorizedClaims.has('institution_is_university') && !/(universidade|cruzeiro do sul)/.test(institution || '')) {
+    violations.push('missing_institution_university_status');
+  }
+  if (authorizedClaims.has('institution_diploma_international_recognition') && !/(fora do brasil|exterior|outros paises|reconhecimento internacional|reconhecid[oa] internacionalmente|validade em outros paises)/.test(institution || '')) {
+    violations.push('missing_international_diploma_recognition');
+  }
+  if (authorizedClaims.has('institution_university_advantage_vs_college') && !/(faculdade|centro universitario|diferencial|mesma forma)/.test(institution || '')) {
+    violations.push('missing_university_advantage');
+  }
+  if (authorizedClaims.has('institution_60_plus_years') && !/\b6[0-9]\s*anos\b/.test(institution || '')) {
+    violations.push('missing_institution_history');
+  }
+  if (authorizedClaims.has('institution_maximum_mec_rating') && !/(nota maxima|conceito maximo).*(mec)|mec.*(nota maxima|conceito maximo)/.test(institution || '')) {
+    violations.push('missing_maximum_mec_rating');
+  }
+  if (authorizedClaims.has('institution_maximum_mec_since_beginning') && !/(desde o inicio|desde que comecou|desde quando comecamos|nota maxima.*mec|mec.*nota maxima)/.test(institution || '')) {
+    violations.push('missing_maximum_mec_since_beginning');
+  }
+
+  const normalizedCourse = normalizeIntentText(String(params.courseName || '').split('(')[0].trim());
+  const conciseCourse = normalizedCourse.replace(/^(cst em|bacharelado em|licenciatura em|tecnologo em)\s+/, '').trim();
+  const normalizedModality = normalizeIntentText(params.modality || '');
+  if (normalizedCourse && !course.includes(normalizedCourse) && (!conciseCourse || !course.includes(conciseCourse))) {
+    violations.push('missing_course_name');
+  }
+  if (!/\b\d+\s*semestres?\b/.test(course) || !/\b\d+\s*anos?\b/.test(course)) violations.push('missing_course_duration');
+  if (normalizedModality && !course.includes(normalizedModality)) violations.push('missing_course_modality');
+
+  if (!/(tutor|suporte|acompanh|atendimento|professor|orienta|estrutura academica)/.test(support || '')) {
+    violations.push('missing_academic_support');
+  }
+  const motivationSignal = /(sonho|objetivo|projeto|cresc|mudanc|area|carreira|sempre quis|vontade|construir)/.test(
+    [institution, course, support, question].filter(Boolean).join(' '),
+  );
+  if (String(params.motivation || '').trim() && !motivationSignal) violations.push('missing_motivation_connection');
+  const motivationAnchors = extractE3MotivationAnchors(String(params.motivation || ''));
+  const presentationContent = [institution, course, support].filter(Boolean).join(' ');
+  if (motivationAnchors.length > 0 && !motivationAnchors.some((anchor) => presentationContent.includes(anchor))) {
+    violations.push('missing_specific_motivation_connection');
+  }
+
+  if (!question || !/(chamou.*atencao|fez sentido|mais gostou|mais sentido|mais chamou)/.test(question)) {
+    violations.push('invalid_interest_question');
+  }
+  if (blocks.some((block) => /(carreira de sucesso|sucesso garantido)/.test(block))) {
+    violations.push('unsupported_promotional_claim');
+  }
+  return { valid: violations.length === 0, violations };
+}
 function promptFingerprint(text: string) {
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) {
@@ -393,7 +636,8 @@ KERNEL DO SISTEMA
 CONTEXTO DINAMICO
 - Etapa atual: ${input.subagent}
 - Tipo de contato: ${getTipoContato(input.trigger)}
-- Nome do lead: ${nome}
+- Nome confiavel disponivel, se ajudar naturalmente: ${nome}
+- Nao use o nome como prefixo automatico, nem em perguntas consecutivas; use apenas quando acrescentar proximidade real.
 - Periodo: ${getPeriodo(timeZone)}
 - Se o trigger for stage_handoff, assuma a conversa imediatamente nesta etapa, sem pedir permissao e sem esperar nova resposta do lead.
 - Se o trigger for stage_handoff e a etapa atual nao for E1, a etapa anterior ja terminou sua validacao final. Nao repita parabens, elogios, comemoracao da decisao ou resumo da etapa anterior. Comece apenas pela primeira acao propria desta etapa.
@@ -597,62 +841,23 @@ function uniqueByNormalized(items: string[]) {
   return unique;
 }
 
-function buildE1CourseLineReply(leadFirstName: string, listedCourses: string[]) {
-  const courseName = extractBaseCourseName(listedCourses[0] || '');
-  const lines = uniqueByNormalized(
-    listedCourses.map((course) => extractAcademicLine(course)).filter(Boolean),
-  );
-
-  if (!courseName || lines.length <= 1) return null;
-
-  const personalizedLead = leadFirstName ? `, ${leadFirstName}` : '';
-
-  return [
-    `${courseName} e uma escolha muito bacana${personalizedLead}!`,
-    '',
-    'Como ela tem caminhos diferentes de formacao, quero so entender qual faz mais sentido para voce.',
-    '',
-    `*${courseName}*`,
-    '',
-    ...lines.map((line) => `- ${line}`),
-    '',
-    'Qual linha voce pretende seguir?',
-  ].join('\n');
+function buildE1CourseLineReply(_leadFirstName: string, _listedCourses: string[]) {
+  return null;
 }
 
-function buildE1AreaReply(leadFirstName: string, requestedArea: string, listedCourses: string[]) {
-  const areaName = normalizeDisplayLabel(requestedArea);
-  const courses = uniqueByNormalized(
-    listedCourses.map((course) => extractBaseCourseName(course)).filter(Boolean),
-  );
-
-  if (!areaName || courses.length === 0) return null;
-
-  const personalizedLead = leadFirstName ? `, ${leadFirstName}` : '';
-
-  return [
-    `Boa escolha${personalizedLead}!! ${areaName} tem bastante opção por aqui.`,
-    '',
-    'Olha só algumas das graduações que temos nessa área:',
-    '',
-    `*${areaName}*`,
-    '',
-    ...courses.map((course) => `- ${course}`),
-    '',
-    'Qual desses mais combina com o que você está buscando?',
-  ].join('\n');
+function buildE1AreaReply(_leadFirstName: string, _requestedArea: string, _listedCourses: string[]) {
+  return null;
 }
 
 function buildCatalogAreaQuestionReply() {
-  return 'Temos bastante opções de graduação por aqui!!\n\nPra eu conseguir ser mais assertivo e não te mandar uma lista enorme de cursos de uma vez, me conta qual área você mais se identifica.';
+  return '';
 }
 
-function buildE1SelectedCatalogCourseReply(courseName: string) {
-  const courseLabel = extractBaseCourseName(courseName) || courseName || 'Esse curso';
-  return `${courseLabel} é uma excelente escolha!! Esse curso temos sim por aqui.\n\nMe confirma de qual cidade você é, por gentileza?`;
+function buildE1SelectedCatalogCourseReply(_courseName: string) {
+  return '';
 }
 
-function buildDeterministicCatalogReply(params: {
+function buildDeterministicCatalogReply(_params: {
   leadFirstName: string;
   latestUserMessage: string;
   lookupMode: string;
@@ -660,50 +865,6 @@ function buildDeterministicCatalogReply(params: {
   currentCity: string;
   result: Record<string, unknown>;
 }) {
-  return null;
-  const matchStatus = String(params.result.match_status || '').toLowerCase();
-  const matchedCourses = Array.isArray(params.result.matched_courses) ? params.result.matched_courses.filter(Boolean) : [];
-  const listedCourses = Array.isArray(params.result.listed_courses) ? params.result.listed_courses.filter(Boolean) : [];
-  const requestedArea = formatAreaLabel(String(params.result.requested_area || ''));
-
-  if (params.lookupMode === 'specific' || params.lookupMode === 'specific_or_related') {
-    if (matchStatus === 'found' && matchedCourses.length > 0) {
-      if (params.subagent === 'E1' && !params.currentCity) {
-        return `${extractBaseCourseName(String(matchedCourses[0] || 'Essa graduacao'))} e uma escolha muito bacana, ${params.leadFirstName}!\n\nQuero entender seu contexto direitinho por aqui.\n\nMe confirma agora de qual cidade voce fala?`;
-      }
-      return `${extractBaseCourseName(String(matchedCourses[0] || 'Essa graduacao'))} e uma escolha muito bacana, ${params.leadFirstName}!`;
-    }
-
-    if (matchStatus === 'not_found') {
-      if (requestedArea) {
-        return `Entendi o que voce procura, ${params.leadFirstName}.\n\nEssa graduacao especifica ainda nao esta entre as opcoes disponiveis por aqui.\n\nNessa area de ${requestedArea} temos outras possibilidades. Posso te apresentar?`;
-      }
-      return `Entendi o que voce procura, ${params.leadFirstName}.\n\nEssa graduacao especifica ainda nao esta entre as opcoes disponiveis por aqui.\n\nPosso te apresentar alternativas parecidas?`;
-    }
-
-    if (matchStatus === 'ambiguous_found' && listedCourses.length > 0) {
-      const e1LineReply = params.subagent === 'E1' ? buildE1CourseLineReply(params.leadFirstName, listedCourses) : null;
-      if (e1LineReply) return e1LineReply;
-      return `Perfeito, ${params.leadFirstName}.\n\nMe diz qual dessas voce quer seguir?`;
-    }
-  }
-
-  if (params.lookupMode.startsWith('browse') && matchStatus === 'browse_found') {
-    const e1AreaReply = params.subagent === 'E1' ? buildE1AreaReply(params.leadFirstName, requestedArea, listedCourses) : null;
-    if (e1AreaReply) return e1AreaReply;
-    return 'Perfeito!\n\nVoce ja tem algum dessa area em especifico? Ou posso listar aqui pra voce todos que temos?';
-  }
-
-  if (params.lookupMode.startsWith('browse')) {
-    if (matchStatus === 'browse_found') {
-      return 'Perfeito! Nós temos alguns cursos excelentes nessa área.\n\nVocê já tem algum dessa área em específico? Ou posso listar aqui pra você todos que temos?';
-    }
-
-    if (matchStatus === 'browse_not_found') {
-      return `${params.leadFirstName}, essa area em especifico nao ofertamos por enquanto.\n\nVoce tem algum outro curso ou area em mente?`;
-    }
-  }
-
   return null;
 }
 
@@ -743,6 +904,11 @@ function buildCourseLookupFactStore(result: Record<string, unknown>, subagent: S
   };
 
   if (subagent === 'E1' || subagent === 'E2') {
+    if (subagent === 'E1' && matchStatus === 'found') {
+      return {
+        course_display_name: shared.course_display_name,
+      };
+    }
     return shared;
   }
 
@@ -787,14 +953,8 @@ async function forceCourseLookup(params: {
     content: [
       'RESULTADO DA CONSULTA OBRIGATORIA DE CURSO',
       '- Esta consulta foi executada automaticamente pelo backend antes da resposta textual.',
-      '- Trate o bloco abaixo como a fonte oficial para confirmar ou negar disponibilidade do curso.',
-      '- O resultado da tool controla os FATOS, mas o jeito de falar deve seguir primeiro o prompt da etapa atual, a PERSONALITY e as regras da dashboard.',
-      '- Nao diga que existe curso sem usar este resultado.',
-      '- Nao diga que nao existe curso sem usar este resultado.',
-      '- So considere curso encontrado quando `match_status` for `found`.',
-      '- Se `match_status` for `found`, isso significa curso confirmado como ofertado.',
-      '- Em E1, quando `match_status` for `found`, deixe claro para o lead que esse curso e uma opcao ofertada por aqui.',
-      '- Em E1, depois de confirmar disponibilidade, a PERSONALITY pode reagir brevemente e de forma humana a escolha do lead antes da pergunta obrigatoria seguinte.',
+      '- O bloco abaixo contem somente fatos que podem ser usados como contexto falavel.',
+      '- Resultado positivo de disponibilidade foi consumido internamente e nao deve ser assunto da resposta.',
       '- Em E1 e E2, voce so pode verbalizar o nome do curso e a linha academica, se realmente precisar pedir escolha entre Bacharelado e Licenciatura.',
       '- Em E1 e E2, NAO verbalize modalidade, duracao, semestres, grade, metodologia, instituicao, suporte, preco, bolsa ou qualquer detalhe de produto.',
       '- Se `match_status` for `ambiguous_found`, significa que o curso existe, mas ha mais de uma linha valida para ele, como bacharelado e licenciatura.',
@@ -805,7 +965,7 @@ async function forceCourseLookup(params: {
       '- Se `match_status` for `browse_found`, NAO avance etapa, NAO peca cidade e espere o lead escolher um curso ou refinar o filtro.',
       '- Se `match_status` for `not_found`, trate como curso especificamente indisponivel por aqui.',
       '- Se `match_status` for `not_found`, NAO peca cidade, NAO faca perguntas da etapa comercial e NAO avance etapa.',
-      '- Se `match_status` for `not_found`, explique de forma humana que essa graduacao especifica nao esta entre as opcoes ofertadas por aqui.',
+      '- Se `match_status` for `not_found`, use apenas esse estado factual e nao avance.',
       '- Se `match_status` for `not_found`, mantenha o redirecionamento dentro da mesma area/segmento oficial de `requested_area`.',
       '- Se `match_status` for `not_found`, ofereca ajuda para mostrar alternativas proximas da mesma area antes de listar cursos.',
       '- Se `match_status` for `not_found`, a formulacao exata deve seguir o prompt da etapa. Nao revele backend, catalogo, consulta interna ou wording tecnico se o prompt proibir isso.',
@@ -867,6 +1027,8 @@ export interface InboundMessage {
 }
 
 export interface SubagentInput {
+  inboundResolution?: ReturnType<typeof classifyInboundAgainstStageState>;
+  pendingCriterionBefore?: string | null;
   subagent: Subagent;
   leadId: string;
   telefone: string;
@@ -917,6 +1079,52 @@ export interface SubagentOutput {
   stagePromptId?: string | null;
   rawModelOutput?: string | null;
   institutionalClaimsPending?: string[];
+  sanitizerApplied?: boolean;
+  sanitizerReason?: string | null;
+  sanitizerBefore?: string | null;
+  sanitizerAfter?: string | null;
+  llmTrace?: Record<string, unknown> | null;
+}
+
+function isLocalDebugLlmTraceEnabled(env: Record<string, string | undefined>) {
+  const flag = String(env.DEBUG_LLM_TRACE || Deno.env.get('DEBUG_LLM_TRACE') || '').trim().toLowerCase() === 'true';
+  if (!flag) return false;
+  const url = String(
+    env.NEXT_PUBLIC_SUPABASE_URL
+      || env.SUPABASE_URL
+      || Deno.env.get('NEXT_PUBLIC_SUPABASE_URL')
+      || Deno.env.get('SUPABASE_URL')
+      || '',
+  ).trim();
+  return /^(https?:\/\/)?(127\.0\.0\.1|localhost|kong)(?::|\/|$)/i.test(url) || url.includes('supabase_edge_runtime');
+}
+
+function sanitizeLlmTraceValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeLlmTraceValue(item));
+  if (typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+      if (/(api[_-]?key|token|authorization|password|secret|service[_-]?role|bearer|cookie)/i.test(key)) {
+        result[key] = '[REDACTED]';
+      } else {
+        result[key] = sanitizeLlmTraceValue(rawValue);
+      }
+    }
+    return result;
+  }
+  return value;
+}
+
+function traceMessages(messages: ChatMessage[]) {
+  return messages.map((message, index) => ({
+    index,
+    role: message.role,
+    content: message.content ?? null,
+    name: (message as any).name ?? null,
+    tool_call_id: (message as any).tool_call_id ?? null,
+    tool_calls: (message as any).tool_calls ?? null,
+  }));
 }
 
 function buildVirtualLeadSnapshot(params: {
@@ -944,7 +1152,7 @@ function buildVirtualLeadSnapshot(params: {
   return lead;
 }
 
-function buildStageContractContext(params: {
+export function buildStageContractContext(params: {
   stage: string;
   pendingCriterionBefore: string | null;
   pendingCriterionAfter: string | null;
@@ -953,6 +1161,8 @@ function buildStageContractContext(params: {
   currentCity: string;
   leadSnapshot: Record<string, unknown> | null | undefined;
   authorizedFacts?: Array<Record<string, unknown>>;
+  inboundResolution?: string;
+  resolvedThisTurn?: unknown;
 }) {
   const salesContext = { ...((params.leadSnapshot?.sales_context || {}) as Record<string, unknown>) };
   const effectiveCourseInterest = String(params.leadSnapshot?.curso_interesse || params.currentCourseInterest || '').trim();
@@ -1003,12 +1213,28 @@ function buildStageContractContext(params: {
 
   if (params.stage === 'E1') {
     const nextCriterion = getNextE1Criterion({ leadSnapshot: params.leadSnapshot });
+    speakableFacts.course_display_name = speakableCourseName;
+    speakableFacts.e1_works_in_area = salesContext.e1_works_in_area === true;
+    speakableFacts.e1_work_status_captured = typeof salesContext.e1_works_in_area === 'boolean';
+    speakableFacts.resolved_this_turn = params.resolvedThisTurn ?? (params.inboundResolution === 'resolved_pending_city' ? 'city'
+      : params.inboundResolution === 'resolved_pending_motivation' ? 'motivation'
+      : courseStatus === 'confirmed_available' && params.pendingCriterionBefore === 'course' ? 'course' : null);
+    speakableFacts.moment_type = speakableFacts.resolved_this_turn === 'course' || speakableFacts.resolved_this_turn === 'motivation'
+      ? 'meaningful'
+      : speakableFacts.resolved_this_turn === 'city'
+        ? 'operational'
+        : null;
+    if (courseStatus === 'confirmed_available') {
+      delete speakableFacts.available_course_lines;
+      delete speakableFacts.related_area_courses;
+      delete speakableFacts.requested_area;
+    }
 
     if (nextCriterion === 'course_line') {
       return {
         processAction: 'ask_course_line',
-        conversationalBehavior: 'present_only_real_available_lines_and_wait_for_choice',
-        allowedIntent: 'confirm_course_exists_and_ask_only_for_real_available_line_choice',
+        conversationalBehavior: 'present_available_lines_and_wait_choice',
+        allowedIntent: 'ask_course_line',
         speakableFacts,
       };
     }
@@ -1016,8 +1242,8 @@ function buildStageContractContext(params: {
     if (nextCriterion === 'alternative_course_selection') {
       return {
         processAction: 'present_segment_options_and_wait_selection',
-        conversationalBehavior: 'present_only_real_same_segment_options_and_wait_for_new_choice',
-        allowedIntent: 'present_same_segment_alternatives_and_wait_for_specific_course_choice',
+        conversationalBehavior: 'present_segment_options_and_wait_selection',
+        allowedIntent: 'present_segment_options_and_wait_selection',
         speakableFacts,
       };
     }
@@ -1025,8 +1251,8 @@ function buildStageContractContext(params: {
     if (nextCriterion === 'catalog_area_selection') {
       return {
         processAction: 'present_real_areas_and_wait_selection',
-        conversationalBehavior: 'present_only_real_catalog_areas_and_wait_for_area_choice',
-        allowedIntent: 'present_real_catalog_areas_and_ask_which_area_matches_best',
+        conversationalBehavior: 'present_catalog_areas_and_wait_selection',
+        allowedIntent: 'present_real_areas_and_wait_selection',
         speakableFacts,
       };
     }
@@ -1034,8 +1260,8 @@ function buildStageContractContext(params: {
     if (nextCriterion === 'course_selection') {
       return {
         processAction: 'present_area_courses_and_wait_selection',
-        conversationalBehavior: 'present_only_real_area_courses_and_wait_for_specific_course_choice',
-        allowedIntent: 'present_real_courses_from_selected_area_and_wait_for_course_choice',
+        conversationalBehavior: 'present_area_courses_and_wait_selection',
+        allowedIntent: 'present_area_courses_and_wait_selection',
         speakableFacts,
       };
     }
@@ -1043,38 +1269,51 @@ function buildStageContractContext(params: {
     if (nextCriterion === 'new_direction') {
       return {
         processAction: 'ask_for_new_direction',
-        conversationalBehavior: 'explain_absence_naturally_without_inventing_segment',
-        allowedIntent: 'explain_unavailable_course_without_known_segment_and_ask_for_new_direction',
+        conversationalBehavior: 'ask_for_new_direction',
+        allowedIntent: 'ask_for_new_direction',
         speakableFacts,
       };
     }
 
     if (nextCriterion === 'city') {
+      const askCitySpeakableFacts = {
+        ...speakableFacts,
+        e1_behavior: 'selected_course_to_city',
+        resolved_this_turn: speakableFacts.resolved_this_turn || 'course',
+      };
+      delete askCitySpeakableFacts.course_status;
+      delete askCitySpeakableFacts.immutable_facts;
+      delete askCitySpeakableFacts.course_was_selected_from_offered_list;
       return {
         processAction: 'ask_city',
-        conversationalBehavior: courseStatus === 'confirmed_available' && courseLine
-          ? 'acknowledge_course_or_line_choice_and_ask_city'
-          : 'acknowledge_course_or_line_choice_and_ask_city',
-        allowedIntent: 'confirm_course_available_and_ask_city',
-        speakableFacts,
+        conversationalBehavior: 'ask_city',
+        allowedIntent: 'ask_city',
+        speakableFacts: askCitySpeakableFacts,
       };
     }
 
     if (nextCriterion === 'motivation') {
       return {
         processAction: 'ask_motivation',
-        conversationalBehavior: 'confirm_course_is_offered_if_relevant_and_make_a_natural_transition_without_sounding_like_checklist',
-        allowedIntent: 'confirm_course_available_and_ask_motivation',
-        speakableFacts,
+        conversationalBehavior: 'ask_motivation',
+        allowedIntent: 'acknowledge_city_and_ask_motivation',
+        speakableFacts: {
+          ...speakableFacts,
+          course_selection_reaction_allowed: false,
+        },
       };
     }
 
-    if (params.pendingCriterionBefore === 'motivation' && params.pendingCriterionAfter === null) {
+    if (nextCriterion === null) {
       return {
-        processAction: 'advance_to_E2',
-        conversationalBehavior: 'briefly_acknowledge_relevant_motivation_before_handoff',
-        allowedIntent: 'contextual_acknowledgement_and_advance',
-        speakableFacts,
+        processAction: 'complete_stage',
+        conversationalBehavior: 'complete_stage',
+        allowedIntent: 'complete_e1_and_handoff_to_e2',
+        speakableFacts: {
+          ...speakableFacts,
+          motivation: salesContext.motivacao_principal || params.leadSnapshot?.dor_principal || null,
+          motivation_principal: salesContext.motivacao_principal || params.leadSnapshot?.dor_principal || null,
+        },
       };
     }
   }
@@ -1083,16 +1322,16 @@ function buildStageContractContext(params: {
     if (params.pendingCriterionAfter === 'vaccine_availability') {
       return {
         processAction: 'ask_vaccine_availability',
-        conversationalBehavior: 'introduce_the_question_naturally',
-        allowedIntent: 'natural_transition_and_ask_vaccine_availability',
+        conversationalBehavior: 'ask_vaccine_availability',
+        allowedIntent: 'ask_vaccine_availability',
         speakableFacts,
       };
     }
     if (params.pendingCriterionAfter === 'vaccine_decider') {
       return {
         processAction: 'ask_vaccine_decider',
-        conversationalBehavior: 'transition_naturally_from_previous_answer',
-        allowedIntent: 'natural_transition_and_ask_vaccine_decider',
+        conversationalBehavior: 'ask_vaccine_decider',
+        allowedIntent: 'ask_vaccine_decider',
         speakableFacts,
       };
     }
@@ -1103,12 +1342,46 @@ function buildStageContractContext(params: {
           ? 'confirm_course_presentation_before_price'
           : 'ask_vaccine_agreement',
         conversationalBehavior: agreementStatus === 'conditional_price_pending_confirmation'
-          ? 'validate_price_request_confirm_value_will_be_sent_and_ask_permission_to_present_course_first'
-          : 'transition_naturally_without_sounding_mechanical',
+          ? 'confirm_course_presentation_before_price'
+          : 'ask_vaccine_agreement',
         allowedIntent: agreementStatus === 'conditional_price_pending_confirmation'
-          ? 'confirm_value_will_be_sent_then_ask_permission_to_present_course_and_methodology_first'
-          : 'natural_transition_and_ask_vaccine_agreement',
+          ? 'confirm_course_presentation_before_price'
+          : 'ask_vaccine_agreement',
         speakableFacts,
+      };
+    }
+  }
+
+  if (params.stage === 'E3') {
+    if (params.pendingCriterionAfter === 'presentation') {
+      return {
+        processAction: 'present_e3_structured_blocks',
+        conversationalBehavior: 'send_three_presentation_blocks_then_interest_question',
+        allowedIntent: 'present_institution_then_course_then_support_then_interest_question',
+        speakableFacts: {
+          ...speakableFacts,
+          lead_motivation: salesContext.motivacao_principal || params.leadSnapshot?.dor_principal || null,
+        },
+      };
+    }
+  }
+
+  if (params.stage === 'E4' && salesContext.proposal_checkpoint_completed === true) {
+    const postProposalOpeningPending = salesContext.e4_post_proposal_opening_pending === true
+      && salesContext.e4_post_proposal_opening_sent !== true;
+    if (postProposalOpeningPending) {
+      return {
+        processAction: 'open_post_proposal_negotiation',
+        conversationalBehavior: 'connect_sent_proposal_to_motivation_and_decision_context',
+        allowedIntent: 'resume_after_admin_sent_proposal_without_representing_or_repreparing_it',
+        speakableFacts: {
+          ...speakableFacts,
+          proposal_sent: true,
+          motivation: salesContext.motivacao_principal || params.leadSnapshot?.dor_principal || null,
+          decision_participant: salesContext.e2_decision_participant || null,
+          decision_answer: salesContext.e2_vaccine_decider_answer || null,
+          response_deadline: 'fim do dia',
+        },
       };
     }
   }
@@ -1117,7 +1390,7 @@ function buildStageContractContext(params: {
     if (salesContext.referral_registered === true || String(salesContext.pending_indication_phone || '').trim()) {
       return {
         processAction: 'prepare_referral_and_close',
-        conversationalBehavior: 'tell_enrolled_student_to_warn_the_referred_person_then_close_humanly',
+        conversationalBehavior: 'prepare_referral_and_close',
         allowedIntent: 'prepare_registered_referral_without_requalifying_or_asking_new_referral',
         speakableFacts: {
           ...speakableFacts,
@@ -1128,7 +1401,7 @@ function buildStageContractContext(params: {
     return {
       processAction: 'human_final_closing',
       conversationalBehavior: 'close_without_reopening_sales_or_referral_collection',
-      allowedIntent: 'close_conversation_humanly_without_new_questions',
+      allowedIntent: 'close_conversation_without_new_questions',
       speakableFacts,
     };
   }
@@ -1136,7 +1409,7 @@ function buildStageContractContext(params: {
   return {
     processAction: 'follow_stage_contract',
     conversationalBehavior: params.stageMatched
-      ? 'preserve_contextual_continuity_with_human_tone'
+      ? 'preserve_contextual_continuity'
       : 'follow_prompt_normally',
     allowedIntent: params.stageMatched
       ? 'contextual_continuity_with_stage_contract'
@@ -1151,6 +1424,10 @@ async function refreshStageContractAfterLookup(params: {
   messages: ChatMessage[];
   out: SubagentOutput;
 }) {
+  const preservedE3AuthorizedFacts = params.input.etapaAtual === 'E3'
+    && Array.isArray(params.out.speakableFacts?.e3_authorized_facts)
+    ? params.out.speakableFacts.e3_authorized_facts as Array<Record<string, unknown>>
+    : undefined;
   const { data: refreshedLead } = await params.input.supabase
     .from('leads')
     .select('curso_interesse, cidade, sales_context')
@@ -1174,15 +1451,17 @@ async function refreshStageContractAfterLookup(params: {
 
   const refreshedStageContract = buildStageContractContext({
     stage: params.input.etapaAtual,
-    pendingCriterionBefore: refreshedPendingCriterion,
+    pendingCriterionBefore: params.input.etapaAtual === 'E1' ? params.out.pendingCriterionBefore : refreshedPendingCriterion,
     pendingCriterionAfter: refreshedPendingCriterion,
     stageMatched: false,
     currentCourseInterest: String(refreshedLead?.curso_interesse || '').trim(),
     currentCity: String(refreshedLead?.cidade || '').trim(),
     leadSnapshot: refreshedLeadSnapshot,
+    authorizedFacts: preservedE3AuthorizedFacts,
+    resolvedThisTurn: params.input.etapaAtual === 'E1' ? params.out.speakableFacts?.resolved_this_turn : undefined,
   });
 
-  params.out.pendingCriterionBefore = refreshedPendingCriterion || null;
+  if (params.input.etapaAtual !== 'E1') params.out.pendingCriterionBefore = refreshedPendingCriterion || null;
   params.out.pendingCriterionAfter = refreshedPendingCriterion || null;
   params.out.allowedIntent = refreshedStageContract.allowedIntent;
   params.out.processAction = refreshedStageContract.processAction;
@@ -1195,10 +1474,10 @@ async function refreshStageContractAfterLookup(params: {
       'CONTRATO POS-CONSULTA OBRIGATORIO',
       '- A consulta de curso ja atualizou o estado real do lead para este mesmo turno.',
       '- Ignore qualquer contrato anterior que tenha sido montado antes da consulta.',
-      `- PROCESS_ACTION atualizado: ${refreshedStageContract.processAction}.`,
-      `- CONVERSATIONAL_BEHAVIOR atualizado: ${refreshedStageContract.conversationalBehavior}.`,
-      `- ALLOWED_INTENT atualizado: ${refreshedStageContract.allowedIntent}.`,
-      `- SPEAKABLE_FACTS atualizados: ${JSON.stringify(refreshedStageContract.speakableFacts || {})}.`,
+      `- PROCESS_ACTION atualizado: ${promptActionLabel(refreshedStageContract.processAction)}.`,
+      `- CONVERSATIONAL_BEHAVIOR atualizado: ${promptActionLabel(refreshedStageContract.conversationalBehavior)}.`,
+      `- ALLOWED_INTENT atualizado: ${promptActionLabel(refreshedStageContract.allowedIntent)}.`,
+      `- SPEAKABLE_FACTS atualizados: ${promptSafeJson(refreshedStageContract.speakableFacts)}.`,
       '- Use somente esse estado atualizado para responder agora.',
       '- Nao antecipe cidade ou motivacao quando o estado pedir escolha de linha ou nova escolha de curso.',
       '- Nao mencione area, segmento ou alternativas se esses dados nao estiverem presentes em SPEAKABLE_FACTS.',
@@ -1207,8 +1486,8 @@ async function refreshStageContractAfterLookup(params: {
 }
 
 export async function runSubagent(input: SubagentInput): Promise<SubagentOutput> {
-  const allowed = TOOLS_BY_SUBAGENT[input.subagent];
-  const toolSpecs = allowed.map((name) => TOOL_SCHEMAS[name]).filter(Boolean);
+  let allowed = TOOLS_BY_SUBAGENT[input.subagent];
+  let toolSpecs = allowed.map((name) => TOOL_SCHEMAS[name]).filter(Boolean);
   const timeZone = input.env.BUSINESS_HOURS_TZ || 'America/Porto_Velho';
   const tracePrompts = isPromptTraceEnabled(input.env);
 
@@ -1221,10 +1500,19 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const stagePrompt = resolveEditorialPrompt(stageConfig, STAGE_FALLBACKS[input.subagent]);
   const personalityPromptId = promptFingerprint(personalityPrompt || '');
   const stagePromptId = promptFingerprint(stagePrompt || '');
+  const { data: leadContext } = await input.supabase
+    .from('leads')
+    .select('nome, lead_person_name, lead_first_name, lead_name_confidence, curso_interesse, cidade, modalidade, sales_context')
+    .eq('id', input.leadId)
+    .maybeSingle();
+  const trustedLeadFirstName = String(leadContext?.lead_name_confidence || '').trim() === 'trusted'
+    ? formatLeadFirstName(String(leadContext?.lead_first_name || leadContext?.lead_person_name || ''))
+    : '';
+  const leadFirstName = normalizeSoft(trustedLeadFirstName) === 'helton' ? '' : trustedLeadFirstName;
 
   const kernelPrompt = buildKernelContext({ ...input, timeZone });
   const renderedPersonality = personalityPrompt
-    ? renderDynamicPrompt(personalityPrompt, input.trigger, input.nomeDoLead, timeZone)
+    ? renderDynamicPrompt(personalityPrompt, input.trigger, leadFirstName || null, timeZone)
     : '';
 
   const governancePrompt = buildGovernanceTagsPrompt(input.messagePolicy || {});
@@ -1316,13 +1604,6 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const latestUserMessage = [...(input.recentUserMessages || [])].filter(Boolean).slice(-1)[0]
     || [...history].reverse().find((item) => item.role === 'user')?.content
     || '';
-  const { data: leadContext } = await input.supabase
-    .from('leads')
-    .select('nome, lead_person_name, lead_first_name, lead_name_confidence, curso_interesse, cidade, modalidade, sales_context')
-    .eq('id', input.leadId)
-    .maybeSingle();
-  const leadFirstName = String(leadContext?.lead_first_name || '').trim()
-    || formatLeadFirstName(String(leadContext?.lead_person_name || leadContext?.nome || input.nomeDoLead || ''));
   if (shouldSendInitialE1Opening({
     subagent: input.subagent,
     history,
@@ -1335,7 +1616,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.outputBeforeGovernance = out.text;
     return out;
   }
-  if (input.etapaAtual === 'E3') {
+  if (false && input.etapaAtual === 'E3') {
     const e3Pending = derivePendingCriterion({
       stage: input.etapaAtual,
       leadSnapshot: input.leadSnapshot || leadContext || null,
@@ -1343,7 +1624,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     });
     const e3SalesContext = { ...((leadContext?.sales_context || input.leadSnapshot?.sales_context || {}) as Record<string, unknown>) };
 
-    if (e3Pending === 'presentation' && e3SalesContext.e3_presentation_complete !== true) {
+    if (false && e3Pending === 'presentation' && e3SalesContext.e3_presentation_complete !== true) {
       const authorizedFacts = await getAuthorizedKnowledgeFacts({
         supabase: input.supabase,
         tenantId: input.tenantId,
@@ -1375,7 +1656,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
             ...e3SalesContext,
             e3_presentation_complete: true,
             e3_presentation_completed_at: new Date().toISOString(),
-            e3_presentation_blocks_sent: ['institution', 'course', 'closing_question'],
+            e3_presentation_blocks_sent: ['institution', 'course', 'study_experience', 'closing_question'],
             e3_institutional_claims_pending: presentation.pendingClaims,
             pending_criterion: 'interest_signal',
             last_agent_question_type: 'interest_signal',
@@ -1401,21 +1682,36 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const currentCity = String(leadContext?.cidade || '').trim();
   const currentSalesContext = { ...(leadContext?.sales_context || {}) } as Record<string, unknown>;
   let authorizedFactsForStage: Array<Record<string, unknown>> = [];
-  const stageState = classifyInboundAgainstStageState({
+  const stageState = input.inboundResolution || classifyInboundAgainstStageState({
     stage: input.etapaAtual,
     leadSnapshot: input.leadSnapshot || leadContext || null,
     history,
     latestUserMessage,
   });
-  const pendingCriterionBefore = derivePendingCriterion({
+  const pendingCriterionBefore = input.pendingCriterionBefore !== undefined ? input.pendingCriterionBefore
+    : input.etapaAtual === 'E1' && Object.prototype.hasOwnProperty.call(input.regenerationContext?.speakableFacts || {}, 'pending_criterion_before')
+      ? input.regenerationContext!.speakableFacts.pending_criterion_before as string | null : derivePendingCriterion({
     stage: input.etapaAtual,
     leadSnapshot: input.leadSnapshot || leadContext || null,
     history,
   });
-  const virtualLeadSnapshot = stageState.matched
+  const normalizedLatestUserMessage = normalizeIntentText(latestUserMessage);
+  const e2DecisionAloneResolved =
+    input.etapaAtual === 'E2'
+    && (pendingCriterionBefore === 'vaccine_decider' || stageState.pendingCriterion === 'vaccine_decider')
+    && ['eu mesmo', 'eu mesma', 'sozinho', 'so eu', 'só eu'].some((pattern) => normalizedLatestUserMessage.includes(pattern))
+    && normalizedLatestUserMessage.includes('decid');
+  const virtualLeadSnapshot = stageState.matched || e2DecisionAloneResolved
     ? buildVirtualLeadSnapshot({
       leadSnapshot: input.leadSnapshot || leadContext || null,
-      statePatch: stageState.statePatch || {},
+      statePatch: e2DecisionAloneResolved
+        ? {
+          e2_decision_maker_status: 'resolved',
+          e2_vaccine_decider_done: true,
+          e2_decision_participant: latestUserMessage,
+          pending_criterion: 'vaccine_agreement',
+        }
+        : stageState.statePatch || {},
     })
     : (input.leadSnapshot || leadContext || null);
   const pendingCriterionAfter = derivePendingCriterion({
@@ -1423,19 +1719,58 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     leadSnapshot: virtualLeadSnapshot,
     history,
   });
+  if (
+    input.etapaAtual === 'E1'
+    && stageState.matched
+    && ['resolved_pending_city', 'resolved_pending_motivation'].includes(String(stageState.classificationReason || ''))
+  ) {
+    allowed = allowed.filter((name) => name !== 'consultar_conhecimento');
+    toolSpecs = allowed.map((name) => TOOL_SCHEMAS[name]).filter(Boolean);
+  }
   const provisionalProcessAction = input.etapaAtual === 'E2'
     && stageState.classificationReason === 'resolved_pending_vaccine_1_travel_or_move'
     && pendingCriterionAfter === 'vaccine_decider'
     ? 'handle_travel_or_move_and_ask_vaccine_decider'
     : null;
   if (input.etapaAtual === 'E3' || provisionalProcessAction) {
-    authorizedFactsForStage = await getAuthorizedKnowledgeFacts({
+    const modality = currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || leadContext?.modalidade || null;
+    const claims = await getAuthorizedKnowledgeFacts({
       supabase: input.supabase,
       tenantId: input.tenantId,
       stage: input.etapaAtual,
-      modality: currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || leadContext?.modalidade || null,
+      modality,
       processAction: provisionalProcessAction,
     });
+    const publishedGeneral = input.etapaAtual === 'E3'
+      ? await fetchKnowledgeItems({
+        supabase: input.supabase,
+        tenantId: input.tenantId,
+        types: ['general'],
+        limit: 24,
+        trackUsage: false,
+      })
+      : [];
+    const generalFacts = publishedGeneral.map((item: any) => ({
+      id: item.id,
+      claim_key: item.key || item.id,
+      category: 'institution',
+      title: item.label || item.key || 'Informacao institucional',
+      content: item.value?.content || item.value?.texto || item.value?.descricao || item.value?.resposta || '',
+      scope: item.scope || 'global',
+      stage: 'E3',
+      status: item.status,
+      priority: item.priority ?? 999,
+      source_type: 'published_dashboard',
+      authorized: true,
+    }));
+    const seenFacts = new Set<string>();
+    authorizedFactsForStage = sanitizeAuthorizedFactsForPrompt([...claims, ...generalFacts])
+      .filter((fact) => {
+        const identity = String(fact.claim_key || fact.title || fact.content || '').trim();
+        if (!identity || seenFacts.has(identity)) return false;
+        seenFacts.add(identity);
+        return true;
+      });
   }
   const stageContract = buildStageContractContext({
     stage: input.etapaAtual,
@@ -1446,6 +1781,8 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     currentCity,
     leadSnapshot: virtualLeadSnapshot,
     authorizedFacts: authorizedFactsForStage,
+    inboundResolution: stageState.classificationReason,
+    resolvedThisTurn: input.regenerationContext?.speakableFacts?.resolved_this_turn,
   });
   let stabilizedStageContract = input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_course_line'
@@ -1453,8 +1790,8 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     ? {
       ...stageContract,
       processAction: 'ask_city',
-      conversationalBehavior: 'acknowledge_course_or_line_choice_and_ask_city',
-      allowedIntent: 'confirm_course_available_and_ask_city',
+      conversationalBehavior: 'ask_city',
+      allowedIntent: 'ask_city',
       speakableFacts: {
         ...(stageContract.speakableFacts || {}),
         pending_criterion_before: pendingCriterionBefore,
@@ -1490,16 +1827,16 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           },
         }
       : stageContract;
-  const e3SpecificQuestion = input.etapaAtual === 'E3'
+  const e3CourseFollowup = input.etapaAtual === 'E3'
     && pendingCriterionBefore === 'interest_signal'
     && pendingCriterionAfter === 'interest_signal'
-    && looksLikeE3SpecificQuestion(latestUserMessage);
-  if (e3SpecificQuestion) {
+    && looksLikeE3DoubtOrObjection(latestUserMessage);
+  if (e3CourseFollowup) {
     stabilizedStageContract = {
       ...stageContract,
-      processAction: 'answer_e3_specific_question',
-      conversationalBehavior: 'answer_only_the_specific_e3_question_with_authorized_facts_then_check_interest_naturally',
-      allowedIntent: 'answer_specific_e3_question_without_representing_full_presentation_or_advancing_stage',
+      processAction: 'handle_e3_course_followup',
+      conversationalBehavior: 'answer_e3_doubt_or_objection_with_authorized_current_course_facts',
+      allowedIntent: 'handle_e3_doubt_or_objection_without_representing_or_advancing_stage',
       speakableFacts: {
         ...(stageContract.speakableFacts || {}),
         pending_criterion_before: pendingCriterionBefore,
@@ -1514,6 +1851,19 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   out.processAction = stabilizedStageContract.processAction;
   out.conversationalBehavior = stabilizedStageContract.conversationalBehavior;
   out.speakableFacts = stabilizedStageContract.speakableFacts;
+  if (
+    input.etapaAtual === 'E3'
+    && String(out.processAction || '') === 'present_e3_structured_blocks'
+    && pendingCriterionAfter === 'presentation'
+  ) {
+    out.pendingCriterionBefore = 'presentation';
+    out.pendingCriterionAfter = 'interest_signal';
+    out.speakableFacts = {
+      ...(out.speakableFacts || {}),
+      pending_criterion_before: 'presentation',
+      pending_criterion_after: 'interest_signal',
+    };
+  }
   if (authorizedFactsForStage.length > 0) {
     out.speakableFacts = {
       ...(out.speakableFacts || {}),
@@ -1524,7 +1874,8 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       role: 'system',
       content: [
         'FACTS AUTORIZADOS PARA ESTE TURNO',
-        '- Use somente estes registros como claims comerciais/acadêmicos verbalizáveis.',
+        '- Estes registros sao fatos autorizados para embasar a fala; nao recite a lista linha por linha.',
+        '- Nao verbalize instrucao interna, metadata, regra de comunicacao, claim_key ou texto sobre o que a comunicacao comercial pode fazer.',
         `- AUTHORIZED_FACTS: ${JSON.stringify(authorizedFactsForStage)}.`,
         '- Se um claim desejado nao estiver nessa lista, nao verbalize nem crie substituto.',
       ].join('\n'),
@@ -1532,26 +1883,26 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   }
   out.personalityPromptId = personalityPromptId;
   out.stagePromptId = stagePromptId;
-  if (false && (
+  if (
     input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_city'
     && pendingCriterionAfter === 'motivation'
-  )) {
+  ) {
     out.text = normalizeMessageText(buildE1AskMotivationReply());
     out.rawModelOutput = out.text;
     out.outputBeforeGovernance = out.text;
     out.deterministicReplyUsed = true;
     out.responseOrigin = 'structural_fallback';
-    out.processAction = 'handle_travel_or_move_and_ask_vaccine_decider';
-    out.allowedIntent = 'handle_travel_or_move_with_confirmed_modality_then_ask_decision_maker';
-    out.conversationalBehavior = 'contextual_objection_handling_without_generic_routine_question';
+    out.processAction = 'ask_motivation';
+    out.allowedIntent = 'acknowledge_city_and_ask_motivation';
+    out.conversationalBehavior = 'ask_motivation';
     return out;
   }
-  if (false && (
+  if (
     input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_motivation'
     && pendingCriterionAfter === null
-  )) {
+  ) {
     out.text = normalizeMessageText(buildE1CompletionAcknowledgement({
       latestUserMessage,
       courseName: deriveSpeakableCourseName(currentCourseInterest, currentSalesContext),
@@ -1560,39 +1911,57 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.outputBeforeGovernance = out.text;
     out.deterministicReplyUsed = true;
     out.responseOrigin = 'structural_fallback';
-    out.processAction = 'ask_vaccine_agreement';
-    out.allowedIntent = 'acknowledge_decision_participant_then_ask_commercial_agreement';
+    out.processAction = 'complete_stage';
+    out.allowedIntent = 'complete_e1_and_handoff_to_e2';
+    out.conversationalBehavior = 'complete_stage';
     return out;
   }
   if (false && (
     input.etapaAtual === 'E2'
-    && stageState.classificationReason === 'resolved_pending_vaccine_1_travel_or_move'
-    && pendingCriterionAfter === 'vaccine_decider'
+    && pendingCriterionAfter === 'vaccine_availability'
+    && !String(stageState.classificationReason || '').trim()
   )) {
-    out.text = normalizeMessageText(buildE2TravelMoveReply({
-      latestUserMessage,
-      modality: currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || leadContext?.modalidade || null,
-    }));
+    out.text = normalizeMessageText(buildE2AvailabilityReply({ leadFirstName }));
     out.rawModelOutput = out.text;
     out.outputBeforeGovernance = out.text;
     out.deterministicReplyUsed = true;
     out.responseOrigin = 'structural_fallback';
-    out.processAction = 'confirm_course_presentation_before_price';
-    out.allowedIntent = 'confirm_value_will_be_sent_then_ask_permission_to_present_course_and_methodology_first';
+    out.processAction = 'ask_vaccine_availability';
+    out.allowedIntent = 'ask_vaccine_availability';
+    out.conversationalBehavior = 'ask_vaccine_availability';
     return out;
   }
   if (false && (
     input.etapaAtual === 'E2'
-    && stageState.classificationReason === 'resolved_pending_vaccine_2'
+    && ['resolved_pending_vaccine_1_travel_or_move', 'resolved_pending_vaccine_1_negative'].includes(String(stageState.classificationReason || ''))
+    && pendingCriterionAfter === 'vaccine_decider'
+  )) {
+    out.text = normalizeMessageText(buildE2DecisionReply({ leadFirstName }));
+    out.rawModelOutput = out.text;
+    out.outputBeforeGovernance = out.text;
+    out.deterministicReplyUsed = true;
+    out.responseOrigin = 'structural_fallback';
+    out.processAction = 'ask_vaccine_decider';
+    out.allowedIntent = 'ask_vaccine_decider';
+    out.conversationalBehavior = 'ask_vaccine_decider';
+    return out;
+  }
+  if (false && (
+    input.etapaAtual === 'E2'
+    && ['resolved_pending_vaccine_2', 'resolved_pending_vaccine_2_from_last_question'].includes(String(stageState.classificationReason || ''))
     && pendingCriterionAfter === 'vaccine_agreement'
   )) {
     out.text = normalizeMessageText(buildE2AgreementReply({
+      leadFirstName,
       decisionParticipant: String(stageState.statePatch?.e2_decision_participant || currentSalesContext.e2_decision_participant || '').trim() || null,
     }));
     out.rawModelOutput = out.text;
     out.outputBeforeGovernance = out.text;
     out.deterministicReplyUsed = true;
     out.responseOrigin = 'structural_fallback';
+    out.processAction = 'ask_vaccine_agreement';
+    out.allowedIntent = 'ask_vaccine_agreement';
+    out.conversationalBehavior = 'ask_vaccine_agreement';
     return out;
   }
   if (false && (
@@ -1605,6 +1974,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.outputBeforeGovernance = out.text;
     out.deterministicReplyUsed = true;
     out.responseOrigin = 'structural_fallback';
+    out.processAction = 'ask_vaccine_agreement';
+    out.allowedIntent = 'ask_vaccine_agreement';
+    out.conversationalBehavior = 'ask_vaccine_agreement';
     return out;
   }
   if (
@@ -1624,11 +1996,10 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.pendingCriterionAfter = 'city';
     out.allowedIntent = 'confirm_selected_course_and_continue_e1';
     out.processAction = 'confirm_selected_course_and_continue_e1';
-    out.conversationalBehavior = 'recognize_chosen_course_confirm_available_and_ask_city_without_relisting_catalog';
+    out.conversationalBehavior = 'ask_city_after_catalog_course_selection';
     out.speakableFacts = {
       ...(out.speakableFacts || {}),
       course_name: selectedCourse,
-      course_status: 'confirmed_available',
       pending_criterion_before: 'course_selection',
       pending_criterion_after: 'city',
     };
@@ -1639,9 +2010,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         `- O lead escolheu um curso real da lista apresentada: ${selectedCourse}.`,
         '- Nao liste cursos novamente.',
         '- Nao ofereca alternativas espontaneamente.',
-        '- Confirme de forma humana que essa graduacao e ofertada por aqui.',
-        '- Depois peca somente a cidade do lead.',
-        '- A PERSONALITY deve escrever a resposta; a estrutura apenas definiu a acao.',
+        '- PROCESS_ACTION=ask_city.',
       ].join('\n'),
     });
   }
@@ -1666,12 +2035,14 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.pendingCriterionBefore = 'catalog_area_selection';
     out.pendingCriterionAfter = 'course_selection';
     out.allowedIntent = relatedAreaCourses.length > 0
-      ? 'present_real_courses_from_selected_area_and_wait_for_course_choice'
+      ? 'present_area_courses_and_wait_selection'
       : 'handle_empty_selected_area_without_silence';
     out.processAction = relatedAreaCourses.length > 0
       ? 'present_area_courses_and_wait_selection'
       : 'handle_empty_catalog_area';
-    out.conversationalBehavior = 'human_bridge_then_area_course_list_without_catalog_voice';
+    out.conversationalBehavior = relatedAreaCourses.length > 0
+      ? 'present_area_courses_and_wait_selection'
+      : 'ask_catalog_area';
     out.speakableFacts = {
       ...(out.speakableFacts || {}),
       course_status: relatedAreaCourses.length > 0 ? 'catalog_area_selected' : 'catalog_area_empty',
@@ -1687,13 +2058,11 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         `- Area escolhida pelo lead: ${requestedArea}.`,
         `- Cursos reais disponiveis nesta area: ${JSON.stringify(relatedAreaCourses)}.`,
         '- O turno NAO termina apenas salvando area.',
-        '- Se houver cursos reais, reaja humanamente e liste somente esses cursos.',
+        '- Se houver cursos reais, liste somente esses cursos.',
         '- Use formato obrigatorio com titulo da area em negrito e bullets dos cursos.',
         '- Depois pergunte qual curso mais combina com o que o lead esta buscando.',
-        '- Se nao houver curso real, responda humanamente sem ficar silencioso e peca outra area ou graduacao.',
+        '- Se nao houver curso real, peca outra area ou graduacao.',
         '- Nao peca cidade, motivacao, modalidade ou detalhe de curso agora.',
-        '- Nao use voz de catalogo, sistema ou formulario.',
-        '- A PERSONALITY deve escrever a ponte; a estrutura apenas definiu fatos e acao.',
       ].join('\n'),
     });
   }
@@ -1701,7 +2070,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     ? String(stageState.pendingCriterion || stageState.lastAgentQuestionType || pendingCriterionBefore || 'contextual_response')
     : detectContextualReplyKind(latestUserMessage, history);
   const allowFreshIntentParsing = input.trigger !== 'stage_handoff';
-  const catalogIntent = !allowFreshIntentParsing || stageState.matched
+  const e3PostPresentationTurn = input.etapaAtual === 'E3'
+    && pendingCriterionBefore === 'interest_signal';
+  const catalogIntent = !allowFreshIntentParsing || stageState.matched || e3PostPresentationTurn
     ? { matched: false, mode: null, query: '', rawQuery: latestUserMessage }
     : detectCatalogIntentWithHistory(latestUserMessage, history);
   const catalogAreaSelectionIntent = input.etapaAtual === 'E1'
@@ -1746,9 +2117,12 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const shouldUseCurrentCourseContext = canUseCourseLookupInStage
     && allowFreshIntentParsing
     && Boolean(currentCourseInterest)
-    && looksLikeCurrentCourseFollowup(latestUserMessage)
+    && (e3CourseFollowup || looksLikeCurrentCourseFollowup(latestUserMessage))
     && !effectiveCatalogIntent.matched;
-  const mustConsultCourseBeforeReply = canUseCourseLookupInStage
+  const mustLoadE3PresentationCourseFacts = input.etapaAtual === 'E3'
+    && pendingCriterionAfter === 'presentation'
+    && Boolean(currentCourseInterest);
+  const mustConsultCourseBeforeReply = input.etapaAtual === 'E1'
     && !contextualReplyKind && effectiveCatalogIntent.matched
     && !broadCatalogRequest
     && !greetingOnlyFollowup
@@ -1805,35 +2179,31 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
 
   if (
     input.etapaAtual === 'E2'
-    && stageState.classificationReason === 'resolved_pending_vaccine_2'
+    && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_agreement'
     && pendingCriterionAfter === 'vaccine_agreement'
   ) {
     const participant = String(stageState.statePatch?.e2_decision_participant || currentSalesContext.e2_decision_participant || '').trim();
-    const solo = /sozinh|eu mesmo|eu mesma|so eu/.test(normalizeIntentText(participant || latestUserMessage));
-    if (!solo) {
-      out.conversationalBehavior = 'acknowledge_third_party_decider_open_space_for_their_questions_then_ask_commercial_agreement';
-      out.allowedIntent = 'acknowledge_decision_participant_then_ask_if_presentation_and_scholarship_make_sense_we_go_to_enrollment';
+    const solo = participant === 'self' || /sozinh|eu mesmo|eu mesma|so eu/.test(normalizeIntentText(participant || latestUserMessage));
+    if (participant && !solo) {
+      out.conversationalBehavior = 'ask_vaccine_agreement';
+      out.allowedIntent = 'ask_vaccine_agreement';
       messages.push({
         role: 'system',
         content: [
-          'VACINA 2 COM TERCEIRO ENVOLVIDO',
-          `- Pessoa citada na decisao: ${participant || latestUserMessage}.`,
-          '- Reaja brevemente de forma humana.',
-          '- Abra espaco para duvidas dessa pessoa de forma natural.',
-          '- No mesmo turno, faca a vacina 3: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.',
-          '- Nao pergunte novamente se o lead decide sozinho ou conversa com alguem.',
-          '- A PERSONALITY escreve; nao use frase fixa.',
+          'DECISOR COM TERCEIRO ENVOLVIDO',
+          `- Pessoa citada na decisao: ${participant}.`,
+          '- Antes do combinado, reconheca de forma curta, natural e contextual que essa pessoa participa da decisao. Nao elogie, nao repita a pergunta e nao invente uma resposta fixa.',
+          '- No mesmo turno, faca o combinado comercial completo: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.',
         ].join('\n'),
       });
     }
   }
-
   if (broadCatalogRequest) {
     out.pendingCriterionBefore = pendingCriterionBefore || 'course';
     out.pendingCriterionAfter = 'catalog_area_selection';
-    out.allowedIntent = 'explain_many_courses_and_ask_area_to_be_assertive';
+    out.allowedIntent = 'ask_catalog_area';
     out.processAction = 'ask_catalog_area';
-    out.conversationalBehavior = 'human_explanation_before_area_question';
+    out.conversationalBehavior = 'ask_catalog_area';
     out.speakableFacts = {
       ...(out.speakableFacts || {}),
       course_status: 'catalog_exploration',
@@ -1846,10 +2216,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         'EXPLORACAO AMPLA DE CATALOGO',
         '- O lead pediu para conhecer cursos/opcoes/graduações em geral.',
         '- Nao consulte nem liste cursos ainda.',
-        '- Explique brevemente que existem muitas opcoes de graduacao.',
-        '- Diga que perguntar a area ajuda a ser mais assertivo e evita mandar lista enorme.',
         '- Pergunte somente com qual area o lead mais se identifica.',
-        '- A PERSONALITY deve escrever a resposta; nao copie template fixo.',
       ].join('\n'),
     });
   }
@@ -1867,7 +2234,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         '- A ultima mensagem do lead indica que podemos seguir para valores/proposta.',
         '- Nao reapresente instituicao, curso, modalidade, duracao, tutoria ou claims.',
         '- Nao faca nova pergunta da E3.',
-        '- Use no maximo uma ponte curta e humana; a estrutura fara o handoff para E4.',
+        '- A estrutura fara o handoff para E4.',
       ].join('\n'),
     });
   }
@@ -1879,8 +2246,8 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         'E7 COM INDICACAO JA REGISTRADA',
         '- A indicacao ja foi registrada antes.',
         '- Nao pergunte nome, telefone, curso, area ou cidade do indicado.',
-        '- Oriente o matriculado a avisar que alguem da instituicao pode entrar em contato com a pessoa indicada.',
-        '- Encerre de forma humana se nao houver mais duvidas.',
+        '- A indicacao registrada autoriza contato posterior com a pessoa indicada.',
+        '- Encerre se nao houver mais duvidas.',
         '- Nao reabra venda, nao requalifique e nao peca nova indicacao.',
       ].join('\n'),
     });
@@ -1894,23 +2261,26 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         '- Nao existe indicacao pendente para coletar neste turno.',
         '- Nao pergunte telefone, nome, curso, area ou cidade.',
         '- Nao fale em concluir matricula ou reabrir processo comercial.',
-        '- Se o lead nao tem duvidas, encerre de forma humana e breve.',
+        '- Se o lead nao tem duvidas, encerre.',
       ].join('\n'),
     });
   }
 
-  if (e3SpecificQuestion) {
+  if (e3CourseFollowup) {
     messages.push({
       role: 'system',
       content: [
-        'DUVIDA ESPECIFICA NA E3',
-        `- Pergunta do lead: ${latestUserMessage}.`,
-        '- Responda diretamente essa duvida com tom humano da PERSONALITY.',
+        'DUVIDA OU OBJECAO POS-APRESENTACAO NA E3',
+        `- Mensagem do lead: ${latestUserMessage}.`,
+        '- Entenda se e duvida, receio, impedimento ou pedido de esclarecimento sobre a graduacao atual e responda diretamente ao ponto real.',
         '- Use somente fatos autorizados em SPEAKABLE_FACTS/AUTHORIZED_FACTS.',
+        '- Se o detalhe perguntado nao estiver confirmado nos fatos, nao invente. Diga com naturalidade que esse detalhe nao esta confirmado no momento e responda apenas o que estiver confirmado.',
         '- Nao reapresente os tres blocos da E3.',
         '- Nao trate como nova consulta de curso.',
         '- Nao avance para E4 apenas por existir duvida.',
-        '- Depois de responder, cheque naturalmente se ficou alguma duvida ou se a pessoa quer ver os valores.',
+        '- Responda em uma bolha. Use duas somente se a explicacao realmente precisar de separacao para ficar clara.',
+        '- Para duas bolhas, use exatamente uma linha contendo somente --- entre elas. Para uma bolha, nao use ---.',
+        '- Preserve PERSONALITY: seja proximo, espontaneo e seguro; conecte ao contexto do lead quando isso ajudar a resposta.',
       ].join('\n'),
     });
   }
@@ -1929,14 +2299,102 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ['E1', 'E2'].includes(input.etapaAtual)
         ? '- Em E1 e E2, e proibido verbalizar modalidade, duracao, semestres, grade, metodologia, instituicao, suporte, preco, bolsa, desconto ou qualquer detalhe de produto. Excecao unica: E2 pode verbalizar modalidade confirmada quando PROCESS_ACTION tratar viagem/mudanca real.'
         : '- Verbalize apenas o que a etapa atual permite.',
-      `- PROCESS_ACTION: ${out.processAction || stabilizedStageContract.processAction}.`,
-      `- CONVERSATIONAL_BEHAVIOR: ${out.conversationalBehavior || stabilizedStageContract.conversationalBehavior}.`,
-      `- ALLOWED_INTENT: ${out.allowedIntent || stabilizedStageContract.allowedIntent}.`,
-      `- SPEAKABLE_FACTS: ${JSON.stringify(out.speakableFacts || stabilizedStageContract.speakableFacts || {})}.`,
+      `- PROCESS_ACTION: ${promptActionLabel(out.processAction || stabilizedStageContract.processAction)}.`,
+      `- CONVERSATIONAL_BEHAVIOR: ${promptActionLabel(out.conversationalBehavior || stabilizedStageContract.conversationalBehavior)}.`,
+      `- ALLOWED_INTENT: ${promptActionLabel(out.allowedIntent || stabilizedStageContract.allowedIntent)}.`,
+      `- SPEAKABLE_FACTS: ${promptSafeJson(out.speakableFacts || stabilizedStageContract.speakableFacts)}.`,
+      ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_availability' ? [
+        '- RESPONSABILIDADE ATUAL: ask_vaccine_availability.',
+        '- Aplique somente a vacina de viagem/mudanca como continuidade da conversa.',
+        '- Modelo de estrutura: "[Nome], voce tem alguma viagem mais longa ou mudanca planejada para os proximos meses que possa interferir no inicio da graduacao?"',
+        '- A PERSONALITY pode adaptar levemente o tom, mas deve manter a mesma intencao, uma unica pergunta e os elementos viagem/mudanca + proximos meses + interferir no inicio da graduacao.',
+        '- Nao valide novamente motivacao, curso, cidade ou resposta anterior.',
+        '- Nao use "Entendi", "Agora", "que bom", "para entender melhor" ou abertura de troca de etapa.',
+        '- Nao narre formulario, etapa, consulta, verificacao, processamento ou espera.',
+      ] : []),
+      ...(input.etapaAtual === 'E1' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_city' ? [
+        '- RESPONSABILIDADE ATUAL: meaningful_course_reaction + ask_city.',
+        '- A reacao ao curso precisa ser comercial forte: escolha de graduacao excelente + oportunidades na area; nao use fala fria de interesse/se interessou.',
+        '- Nao use tom frio de mero interesse; nao verbalize disponibilidade interna.',
+      ] : []),
+      ...(input.etapaAtual === 'E1' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_motivation' ? [
+        '- RESPONSABILIDADE ATUAL: ask_motivation.',
+        ...(out.speakableFacts?.e1_work_status_captured === true ? [
+          '- A resposta sobre trabalho ja foi registrada. Reaja curto e pergunte somente se a graduacao representa sonho ou objetivo pessoal.',
+          '- Nao repita a pergunta sobre trabalhar na area.',
+        ] : [
+          '- Pergunte diretamente se o lead ja trabalha nessa area ou se a graduacao representa sonho/objetivo pessoal.',
+        ]),
+        '- Nao use frase processual como "para entender melhor sua motivacao" e nao repita o nome do curso nessa hora.',
+        '- Nao faca outra pergunta antes da pergunta principal.',
+      ] : []),
+      ...(input.etapaAtual === 'E1' && String(out.processAction || stabilizedStageContract.processAction) === 'complete_stage' ? [
+        '- RESPONSABILIDADE ATUAL: react_contextually_to_resolved_motivation.',
+        '- Faca no maximo UMA reacao contextual ao motivo resolvido.',
+        '- Nao crie segunda validacao, nao pergunte nada e nao execute assunto da E2.',
+      ] : []),
+      ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_decider' ? [
+        '- RESPONSABILIDADE ATUAL: ask_decision_participant.',
+        '- Modelo de estrutura: "E sobre a decisao de iniciar esse objetivo, voce decide sozinho/sozinha/por conta propria ou costuma conversar com alguem antes?"',
+        '- Use "sozinha" se houver seguranca de genero feminino, "sozinho" se houver seguranca de genero masculino, e "por conta propria" quando nao houver seguranca.',
+        '- A PERSONALITY pode adaptar levemente o tom, mas deve manter a mesma intencao e fazer uma unica pergunta sobre quem participa da decisao.',
+        '- Quando nao houver viagem/mudanca real, va direto para a pergunta de decisor, sem validar ou celebrar dado operacional.',
+        '- Nao fale a palavra matricula.',
+      ] : []),
+      ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_decider' && String(currentSalesContext.e2_availability_objection_kind || '') === 'travel_or_move' ? [
+        '- A pessoa informou uma viagem ou mudanca real. Resposta dela: ' + String(currentSalesContext.e2_vaccine_availability_answer || 'nao detalhada') + '.',
+        '- Antes da pergunta sobre quem participa da decisao, escreva um primeiro paragrafo curto que reaja a esse contexto concreto de modo humano e util.',
+        '- Se modalidade confirmada ajudar a explicar a situacao, pode menciona-la com precisao. Nao invente impacto, prazo, garantia ou solucao.',
+        '- Essa reacao deve ser personalizada pela PERSONALITY, nunca frase fixa, e precisa ficar em paragrafo separado da pergunta do decisor.',
+      ] : []),
+      ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_agreement' ? [
+        '- RESPONSABILIDADE ATUAL: present_commercial_agreement.',
+        '- Modelo de estrutura: "[Nome], depois que eu apresentar pra voce sobre esse curso e voce sentir que nao faz sentido ou que nao encaixa no seu orcamento hoje, voce pode me dar um nao sincero e esta tudo bem. Mas se fizer sentido e a bolsa de estudos ficar boa, a gente ja segue para sua inscricao e garantimos essa oportunidade. Combinado?"',
+        '- Se o lead respondeu que conversa com esposa, marido, pai, mae, familia ou outra pessoa, DEVE reconhecer curto antes do combinado, no sentido: "Perfeito, conversa com ela/ele sim e se surgir alguma duvida especifica pode me enviar."',
+        '- Esse reconhecimento deve ser curto e natural; nao pode virar elogio, nao pode repetir a pergunta de decisor e nao pode substituir o combinado. Use ela para esposa/mae, ele para marido/pai, e pessoa/familia quando nao houver genero claro.',
+        '- A PERSONALITY pode adaptar levemente o tom, mas deve manter: apresentar o curso, possibilidade de nao fazer sentido/nao encaixar no orcamento, permissao para nao sincero, bolsa de estudos ficar boa, seguir para inscricao, garantir oportunidade e confirmar com "Combinado?".',
+        '- Se a decisao foi sozinho, nao valide nem elogie a independencia; comece diretamente pelo conteudo do combinado.',
+        '- O combinado deve conter lado negativo, lado positivo e terminar em confirmacao.',
+        '- Nao introduza, anuncie, peca permissao ou diga que vai fazer/apresentar o combinado.',
+      ] : []),
+      ...(input.etapaAtual === 'E3' && String(out.processAction || stabilizedStageContract.processAction) === 'present_e3_structured_blocks' ? [
+        '- RESPONSABILIDADE ATUAL: execute integralmente a estrutura editorial definida no prompt da dashboard; ele e a unica fonte editorial da E3.',
+        '- Entregue 3 mensagens de apresentacao ou 3 mensagens de apresentacao mais uma 4a pergunta final, exatamente como o prompt da dashboard determinar para este contexto.',
+        '- Use uma linha contendo somente --- entre mensagens. Para 3 mensagens use 2 separadores; para 4 mensagens use 3 separadores.',
+        '- FACTS e AUTHORIZED_FACTS apenas determinam o que e verdadeiro. A selecao, ordem, profundidade, tom e pergunta final pertencem exclusivamente ao prompt da dashboard.',
+        '- PERSONALITY e obrigatoria na redacao: transforme fatos em conversa espontanea, entusiasta e proxima, conectada ao motivo real do lead.',
+        `- MOTIVO CONFIRMADO DO LEAD: ${String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || 'nao informado')}.`,
+        `- REFERENCIAS CENTRAIS DO MOTIVO: ${extractE3MotivationAnchors(String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')).join(', ') || 'nenhuma'}.`,
+        '- Quando houver motivo confirmado, abra o PRIMEIRO bloco conectando naturalmente um beneficio a esse motivo especifico. Faca isso em uma frase organica, sem repetir a fala do lead e sem frase generica pronta sobre objetivos.',
+        '- A apresentacao so esta completa se deixar claro, ja na abertura, que voce entendeu o motivo concreto desta pessoa.',
+        '- Cada bloco precisa soar como Helton falando com esta pessoa, nunca como catalogo, ficha tecnica, texto institucional, lista de vantagens ou script lido.',
+        '- Costure os fatos com transicoes naturais e valor pratico para o lead. Nao empilhe afirmacoes formais, abstratas ou genericas.',
+        '- Selecione os diferenciais mais fortes para este lead e desenvolva valor pratico. Nao repita o mesmo diferencial, beneficio ou prova institucional em blocos diferentes.',
+        '- Antes de enviar, releia como conversa: substitua qualquer sequencia de afirmacoes institucionais por uma explicacao humana, entusiasta e conectada a escolha desta pessoa.',
+        '- A estrutura define somente quantidade e finalidade dos blocos. Ela nunca reduz a liberdade de escrita da PERSONALITY dentro dos fatos autorizados.',
+        '- Dentro de cada bolha de apresentacao, organize as ideias em paragrafos curtos separados por uma linha em branco. A pergunta final permanece em seu proprio bloco.',
+        '- Respeite integralmente regras da dashboard, incluindo caracteres nao permitidos. Nao use travessao longo.',
+        '- Nunca verbalize metadata, instrucoes internas, claim_key ou frases sobre a comunicacao comercial.',
+      ] : []),
+      ...(input.etapaAtual === 'E4' && String(out.processAction || stabilizedStageContract.processAction) === 'open_post_proposal_negotiation' ? [
+        '- RESPONSABILIDADE ATUAL: retomar somente depois de a proposta ja ter sido enviada pelo administrativo.',
+        '- Escreva UMA mensagem com dois paragrafos curtos, sem usar ---.',
+        '- Primeiro paragrafo: confirme que a pessoa pode conferir a oportunidade enviada e conecte a bolsa ao MOTIVO CONFIRMADO do lead de forma humana e especifica.',
+        '- Segundo paragrafo: use o contexto real de decisao. Se `decision_participant` for self, deixe claro de forma natural que a decisao esta nas maos do proprio lead. Se houver outra pessoa, mencione somente a pessoa ou contexto realmente informado em `decision_answer` ou `decision_participant`, sem inventar nomes.',
+        '- Peça uma resposta ate o fim do dia para garantir a oportunidade. A PERSONALITY escolhe a redacao; nao use frase congelada.',
+        '- Proposta ja foi enviada. Nunca diga que vai preparar, organizar, enviar, atualizar, consultar ou verificar proposta.',
+        '- Nao volte para apresentacao do curso, catalogo, cursos relacionados, perguntas de qualificacao, administrativo, checkpoint ou processo interno.',
+        '- Nao invente valor, desconto, prazo diferente ou condicao nao presente em SPEAKABLE_FACTS.',
+      ] : []),
       '- A estrutura define O QUE precisa acontecer.',
-      '- A PERSONALITY define COMO isso entra naturalmente na conversa.',
-      '- Nao reduza a resposta a uma pergunta seca se houver espaco para reacao contextual breve e proporcional.',
       '- Nunca reabra criterio ja concluido.',
+      '- Use o nome do lead com parcimonia; nao abra toda resposta repetindo o nome.',
+      ...(input.etapaAtual === 'E1' ? [
+        '- Use course_display_name exatamente como nome falavel, preservando acentos. Nao verbalize chaves normalizadas.',
+        '- Se e1_behavior=selected_course_to_city: valorize a escolha da graduacao, mencione oportunidades nessa area e peca a cidade.',
+        '- Se e1_behavior=selected_course_to_city: nao verbalize disponibilidade, oferta, existencia no catalogo, temos esse curso ou equivalente.',
+        '- Em complete_stage, nao faca pergunta e nao mencione documentacao, matricula, processo, proxima etapa ou assunto futuro. O runtime executara E2; nao execute E2 dentro de E1.',
+      ] : []),
       '- Se o criterio depois da mensagem atual for nenhum, nao invente nova pergunta; faca a transicao/avance permitido pela etapa.',
       '- Se `course_status` for `ambiguous_available`, use SOMENTE `available_course_lines` e nunca invente linha placeholder.',
       '- Se `course_status` for `catalog_exploration`, liste SOMENTE `available_areas`, nao peca cidade, nao peca motivacao e espere a escolha de area.',
@@ -1948,71 +2406,104 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
 
   if (input.regenerationContext) {
     const forbiddenTopics = input.regenerationContext.forbiddenTopics || [];
-    const extraEditorialRules: string[] = [];
+    const structuralCorrections: string[] = [];
     if (forbiddenTopics.some((topic) => String(topic).includes('flow_narration') || String(topic).includes('flow_progress_narration'))) {
-      extraEditorialRules.push('- Proibido narrar processo, progresso, etapa, continuidade ou proximos passos.');
-      extraEditorialRules.push('- Faca a pergunta de forma direta e humana, sem explicar o fluxo.');
+      structuralCorrections.push('- Remova narracao de processo, progresso, etapa, continuidade ou proximos passos.');
+      structuralCorrections.push('- Remova expressões detectadas como fluxo/processo, como "para seguir", "para continuar" ou equivalentes presentes em VIOLATIONS.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('repeated_city'))) {
-      extraEditorialRules.push('- Proibido repetir o nome da cidade informado pelo lead.');
-      extraEditorialRules.push('- Use no maximo uma reacao curta e passe para a proxima pergunta.');
+      structuralCorrections.push('- Remova repeticao do nome da cidade ja informada pelo lead.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('unnecessary_single_line_mention'))) {
-      extraEditorialRules.push('- Proibido verbalizar Bacharelado, Licenciatura ou outra linha unica interna nesta resposta.');
-      extraEditorialRules.push('- Mencione apenas o nome comercial do curso.');
+      structuralCorrections.push('- Remova Bacharelado, Licenciatura ou outra linha unica interna desta resposta.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('missing_course_line') || String(topic).includes('invalid_course_line') || String(topic).includes('placeholder_line'))) {
-      extraEditorialRules.push('- Curso ambiguo: liste TODAS e SOMENTE as linhas reais de `available_course_lines`.');
-      extraEditorialRules.push('- Proibido oferecer cursos alternativos ou perguntar cidade antes da escolha da linha.');
+      structuralCorrections.push('- Para curso ambiguo, use somente linhas reais de `available_course_lines` e aguarde escolha.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('technical_course_name_leak'))) {
-      extraEditorialRules.push('- Proibido verbalizar nome tecnico bruto, sigla CST, ABI, EGRESSO ou a palavra Tecnologo.');
-      extraEditorialRules.push('- Use somente o nome comercial limpo do curso quando precisar citar o curso.');
+      structuralCorrections.push('- Remova nome tecnico bruto, sigla CST, ABI, EGRESSO ou a palavra Tecnologo.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('ungrounded_output'))) {
-      extraEditorialRules.push('- Proibido mencionar area, segmento, cursos relacionados, alternativas proximas ou qualquer classificacao inferida.');
-      extraEditorialRules.push('- Use somente os fatos explicitamente presentes em speakable_facts.');
+      structuralCorrections.push('- Remova area, segmento, cursos relacionados, alternativas ou classificacao sem base em speakable_facts.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('catalog_selection_loop'))) {
-      extraEditorialRules.push('- O lead ja escolheu um curso da lista apresentada.');
-      extraEditorialRules.push('- Proibido listar cursos, oferecer alternativas ou voltar para a area.');
-      extraEditorialRules.push('- Confirme humanamente o curso escolhido como ofertado e peca somente a cidade.');
+      structuralCorrections.push('- Nao liste cursos, nao ofereca alternativas e nao volte para area quando o lead ja escolheu curso da lista.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('unavailable_dead_end_tone'))) {
-      extraEditorialRules.push('- Curso indisponivel nao pode soar como beco sem saida.');
-      extraEditorialRules.push('- Nao use "Infelizmente", "mas estou aqui para ajudar", "por favor me fale/informe" ou tom burocratico.');
-      extraEditorialRules.push('- Reconheca a escolha de forma humana, diga que a graduacao especifica nao esta entre as opcoes e preserve a oportunidade.');
-      extraEditorialRules.push('- Se houver requested_area e related_area_courses, conduza para alternativas reais da mesma linha.');
-      extraEditorialRules.push('- Se nao houver segmento confiavel, peca nova direcao de forma leve e comercial.');
+      structuralCorrections.push('- Use somente estado/fatos do contrato para curso indisponivel e nova direcao/alternativas autorizadas.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('missing_third_party_decider_acknowledgement'))) {
-      extraEditorialRules.push('- Vacina 2 com terceiro: reconheca a pessoa citada pelo lead e abra espaco para duvidas dela.');
-      extraEditorialRules.push('- Depois faca a vacina 3 no mesmo turno, sem repetir pergunta sobre quem decide.');
+      structuralCorrections.push('- Se o lead citou esposa, marido, pai, mae, familia ou outra pessoa, reconheca curto: conversa com ela/ele sim e se surgir alguma duvida especifica pode me enviar; depois faca o combinado completo.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('unexpected_self_introduction'))) {
+      structuralCorrections.push('- Remova reapresentacao do Helton; a abertura inicial e responsabilidade estrutural e nao deve ser repetida.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('unexpected_repeated_greeting'))) {
+      structuralCorrections.push('- Remova saudacao por horario; saudacao so acontece na abertura inicial estrutural.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('repeated_course_praise_after_city'))) {
+      structuralCorrections.push('- Cidade e dado operacional: remova elogio do curso/area/oportunidades e faca somente a pergunta de trabalho ou sonho/objetivo.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('weak_course_selection_reaction'))) {
+      structuralCorrections.push('- Curso escolhido e momento significativo: use reacao comercial forte com escolha de graduacao excelente e oportunidades na area antes de pedir cidade.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('complete_stage_reopened_course_selection'))) {
+      structuralCorrections.push('- E1 ja resolveu curso/cidade/motivacao; nao reabra escolha de curso, disponibilidade ou alternativas.');
+      structuralCorrections.push('- Responda somente com reacao contextual curta ao motivo resolvido.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('missing_contextual_motivation_reaction'))) {
+      structuralCorrections.push('- Em complete_stage da E1, reaja ao motivo especifico que o lead deu.');
+      structuralCorrections.push('- Se for familia, mencione familia/caminho/seguir/tradicao de forma humana.');
+      structuralCorrections.push('- A reacao precisa se conectar ao motivo especifico informado pelo lead.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('repeated_resolved_topic'))) {
+      structuralCorrections.push('- Se o lead disse que nao tem viagem/mudanca, nao valide essa resposta; va direto para a pergunta de decisor.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('missing_travel_move_contextual_reaction'))) {
+      structuralCorrections.push('- A pessoa informou viagem/mudanca real: escreva primeiro uma reacao curta, humana e util ao contexto dela; depois, em novo paragrafo, faca somente a pergunta de decisor.');
+      structuralCorrections.push('- Nao use frase fixa, nao invente garantia e nao omita a reacao antes da pergunta.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('e3_missing_personalized_motivation_opening'))) {
+      structuralCorrections.push('- Abra o primeiro bloco conectando explicitamente um beneficio real ao motivo concreto do lead; nao deixe essa conexao para o fim nem use frase generica.');
+      structuralCorrections.push('- Reescreva em tom de conversa entusiasta e elimine repeticao de diferencial institucional entre blocos.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('duplicate_meaningful_reaction'))) {
+      structuralCorrections.push('- Remova reacao duplicada ao mesmo motivo; E1 reage uma vez e E2 pergunta apenas o criterio atual.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('operational_answer_overvalidation'))) {
+      structuralCorrections.push('- Dado operacional resolvido nao recebe elogio, celebracao ou validacao; siga diretamente para a responsabilidade atual.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('agreement_permission_preamble'))) {
+      structuralCorrections.push('- O combinado comercial ja e a pergunta atual; remova pergunta de permissao para combinar, continuar ou apresentar.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('commercial_agreement_incomplete'))) {
+      structuralCorrections.push('- O combinado comercial precisa conter orcamento, nao sincero/tudo bem, bolsa de estudos ficar boa, inscricao, oportunidade e Combinado.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('medical_vaccine_confusion') || String(topic).includes('question_mismatch:ask_vaccine_availability'))) {
+      structuralCorrections.push('- Remova linguagem medica ou de saude; a pergunta permitida e comercial, sobre disponibilidade por viagem/mudanca.');
+      structuralCorrections.push('- A pergunta permitida e somente sobre viagem longa ou mudanca planejada nos proximos meses.');
+    }
+    if (forbiddenTopics.some((topic) => String(topic).includes('question_mismatch:ask_motivation'))) {
+      structuralCorrections.push('- Para ask_motivation, pergunte se a pessoa ja trabalha na area OU se a graduacao representa sonho/objetivo pessoal.');
+      structuralCorrections.push('- Nao troque por pergunta generica como o que motivou voce.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('question_mismatch:ask_vaccine_agreement') || String(topic).includes('repeated_resolved_criterion:vaccine_decider'))) {
-      extraEditorialRules.push('- A acao permitida agora e a Vacina 3/combinado.');
-      extraEditorialRules.push('- Proibido repetir pergunta sobre decidir sozinho ou conversar com alguem.');
-      extraEditorialRules.push('- A resposta precisa combinar: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.');
+      structuralCorrections.push('- Remova repeticao da pergunta sobre quem decide e siga para o combinado comercial.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('segment_unavailable_inferred_area'))) {
-      extraEditorialRules.push('- Sem segmento confiavel: proibido mencionar fisica, ciencias exatas, area relacionada, curso relacionado, alternativas proximas ou segmento parecido.');
-      extraEditorialRules.push('- Diga somente que essa graduacao especifica nao esta disponivel por aqui e pergunte qual outra graduacao ou area a pessoa considera.');
+      structuralCorrections.push('- Sem segmento confiavel, remova area, curso relacionado, alternativas proximas ou segmento parecido.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('e7_final_closing_reopened_process'))) {
-      extraEditorialRules.push('- E7 final: proibido pedir telefone, curso, area ou cidade.');
-      extraEditorialRules.push('- Proibido falar em concluir matricula ou seguir processo.');
-      extraEditorialRules.push('- Encerramento humano, curto, sem nova pergunta operacional.');
+      structuralCorrections.push('- Em E7 final, remova telefone, curso, area, cidade, matricula ou reabertura de processo.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact:instituicao') || String(topic).includes('unauthorized_stage_fact:institui'))) {
-      extraEditorialRules.push('- Proibido mencionar instituicao, universidade ou "aqui na instituicao" nesta resposta.');
+      structuralCorrections.push('- Remova instituicao, universidade ou "aqui na instituicao" desta resposta.');
     }
     if (input.etapaAtual === 'E3' && forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact'))) {
-      extraEditorialRules.push('- E3: use SOMENTE `e3_authorized_facts` dentro de speakable_facts para claims institucionais, suporte e modalidade.');
-      extraEditorialRules.push('- Claims comerciais so podem aparecer se a claim_key correspondente existir em `e3_authorized_claim_keys`.');
-      extraEditorialRules.push('- Se uma claim_key nao existir, nao crie substituto nem force frase parecida.');
+      structuralCorrections.push('- Em E3, remova claims que nao tenham claim_key em `e3_authorized_claim_keys`.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('unauthorized_stage_fact:early_stage_course_details'))) {
-      extraEditorialRules.push('- Proibido apresentar produto, detalhes do curso ou qualquer informacao editorial fora do que a etapa permite.');
+      structuralCorrections.push('- Remova detalhes de produto ou informacao fora da etapa permitida.');
     }
 
     messages.push({
@@ -2020,25 +2511,22 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       content: [
         'REGENERACAO OBRIGATORIA DE RESPOSTA',
         `- A saida anterior violou o contrato estrutural da etapa ${input.etapaAtual}.`,
-        `- Allowed intent: ${input.regenerationContext.allowedIntent}.`,
-        `- Speakable facts: ${JSON.stringify(input.regenerationContext.speakableFacts || {})}.`,
-        `- Forbidden topics detected: ${(input.regenerationContext.forbiddenTopics || []).join(', ') || 'nenhum informado'}.`,
-        `- Original output proibido: ${input.regenerationContext.originalOutput || '(vazio)'}.`,
+        `- PROCESS_ACTION: ${promptActionLabel(out.processAction || stabilizedStageContract.processAction)}.`,
+        `- ALLOWED_INTENT: ${promptActionLabel(input.etapaAtual === 'E1' ? out.allowedIntent : input.regenerationContext.allowedIntent)}.`,
+        `- SPEAKABLE_FACTS: ${promptSafeJson(input.etapaAtual === 'E1' ? out.speakableFacts : input.regenerationContext.speakableFacts)}.`,
+        `- VIOLATIONS: ${(input.regenerationContext.forbiddenTopics || []).join(', ') || 'nenhuma informada'}.`,
+        `- Original output proibido, somente para referencia do que NAO copiar: ${input.regenerationContext.originalOutput || '(vazio)'}.`,
         '- Preserve o mesmo estado comercial e NAO avance etapa.',
-        '- Nao invente texto estrutural proprio, nao use voz seca, nao use template fixo.',
-        '- Reescreva a resposta agora usando a mesma PERSONALITY e o mesmo prompt da etapa.',
-        '- Corrija somente a redacao editorial/comportamental; mantenha intactos stage, process_action, conversational_behavior e speakable_facts.',
-        '- Se houver `flow_narration`, faca a pergunta/ponte diretamente sem narrar processo, etapa, continuidade ou progresso.',
-        '- Se houver `repeated_city`, NAO repita o nome da cidade do lead; use no maximo uma reacao curta e siga.',
-        '- Se houver `unnecessary_single_line_mention`, NAO verbalize Bacharelado/Licenciatura quando existe so uma linha interna.',
-        '- Se houver `ungrounded_output`, NAO adicione area, segmento, curso relacionado ou fato que nao esteja em speakable_facts.',
-        ...extraEditorialRules,
+        '- Corrija somente as violacoes detectadas, preservando integralmente a PERSONALITY ativa e o prompt da etapa.',
+        '- Mantenha a mesma responsabilidade estrutural e os mesmos fatos falaveis, sem expor nomes tecnicos internos.',
+        '- Se process_action=complete_stage, nao faca pergunta e nao abra assunto futuro.',
+        ...structuralCorrections,
         '- Responda apenas com a nova mensagem final permitida para o lead.',
       ].join('\n'),
     });
   }
 
-  if (shouldUseCurrentCourseContext) {
+  if (mustLoadE3PresentationCourseFacts || shouldUseCurrentCourseContext) {
     const currentCourseQuery = buildCourseQueryCandidate(currentCourseInterest);
     if (currentCourseQuery && !hasAnyCourseLookup(out.toolCalls)) {
       if (tracePrompts) {
@@ -2051,6 +2539,28 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         messages,
         out,
       });
+      if (input.etapaAtual === 'E3' && (mustLoadE3PresentationCourseFacts || e3CourseFollowup)) {
+        const lookupResult = out.toolCalls[out.toolCalls.length - 1]?.result as Record<string, unknown> | undefined;
+        const courseItem = Array.isArray(lookupResult?.items) ? lookupResult.items[0] as Record<string, unknown> : null;
+        const courseModality = String(courseItem?.modalidade || currentSalesContext.modalidade_oferta || leadContext?.modalidade || '').trim();
+        const courseDuration = String(courseItem?.duracao || '').trim();
+        allowed = allowed.filter((name) => name !== 'consultar_conhecimento');
+        toolSpecs = allowed.map((name) => TOOL_SCHEMAS[name]).filter(Boolean);
+        messages.push({
+          role: 'system',
+          content: [
+            mustLoadE3PresentationCourseFacts
+              ? 'DADOS DO CURSO CONFIRMADOS PARA A APRESENTACAO E3:'
+              : 'DADOS DO CURSO CONFIRMADOS PARA A RESPOSTA DA E3:',
+            `- Modalidade obrigatoria no bloco do curso: ${courseModality || 'nao informada'}.`,
+            `- Duracao confirmada: ${courseDuration || 'nao informada'}.`,
+            '- Bacharelado/Licenciatura e linha de formacao; nunca use como modalidade.',
+            mustLoadE3PresentationCourseFacts
+              ? '- A consulta de curso ja foi concluida. Nao chame consultar_conhecimento novamente; escreva agora a apresentacao em blocos.'
+              : '- A consulta de curso ja foi concluida. Nao chame consultar_conhecimento novamente; responda somente a duvida ou objecao atual.',
+          ].join('\n'),
+        });
+      }
       messages.push({
         role: 'system',
         content: [
@@ -2084,9 +2594,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         content: [
           'A ultima mensagem do lead mencionou um curso especifico e a consulta obrigatoria no catalogo oficial ja foi executada.',
           'Regras obrigatorias para responder agora:',
-          '- O retorno da tool define os fatos, mas a redacao final deve obedecer primeiro ao prompt da etapa atual, a PERSONALITY e as regras da dashboard.',
+          '- O retorno da tool define apenas fatos/estado.',
           '- So considere curso confirmado quando `match_status` for `found`.',
-          '- Na E1, se `match_status` for `found` e a cidade ainda nao tiver sido confirmada, o proximo passo e reagir brevemente de forma humana a escolha e entao pedir a cidade.',
+          '- Na E1, se `match_status` for `found` e a cidade ainda nao tiver sido confirmada, PROCESS_ACTION=ask_city.',
           '- Se `match_status` for `ambiguous_found`, o curso existe, mas o lead precisa escolher a linha correta.',
           '- Se `match_status` for `ambiguous_found`, liste somente as linhas reais presentes em `available_course_lines` e pergunte qual linha ele quer seguir.',
           '- Se `match_status` for `ambiguous_found`, NAO siga para cidade, motivacao ou avancar_etapa.',
@@ -2094,15 +2604,14 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           '- Se `match_status` for `browse_found`, NAO siga para cidade, motivacao ou avancar_etapa.',
           '- Se `match_status` for `not_found`, nao invente disponibilidade.',
           '- Se `match_status` for `not_found`, NAO siga com o processo comercial, NAO peca cidade e NAO faca pergunta de motivacao.',
-          '- Se `match_status` for `not_found`, nao use wording tecnico como "catalogo", "consulta", "sistema" ou "nao localizei" se o prompt da etapa proibir isso.',
-          '- Se `match_status` for `not_found` com `requested_area` e `related_area_courses`, reconheca a escolha, diga que essa graduacao especifica nao esta entre as opcoes, preserve a oportunidade nessa mesma linha e ofereca/lista somente alternativas reais desse segmento.',
+          '- Se `match_status` for `not_found`, nao use wording tecnico como "catalogo", "consulta" ou "sistema".',
+          '- Se `match_status` for `not_found` com `requested_area` e `related_area_courses`, use somente alternativas reais desse segmento.',
           '- Se `match_status` for `not_found` com `requested_area` e `related_area_courses`, nao jogue imediatamente para outra area ou outro curso livre.',
-          '- Se `match_status` for `not_found` sem `requested_area` ou sem alternativas reais, peca nova direcao de forma humana, sem tom burocratico, sem "Infelizmente", sem "por favor me informe".',
-          '- Se `match_status` for `browse_not_found`, mantenha a mesma logica editorial e peca outra area, modalidade, grau ou curso especifico sem linguagem tecnica.',
+          '- Se `match_status` for `not_found` sem `requested_area` ou sem alternativas reais, PROCESS_ACTION=ask_for_new_direction.',
+          '- Se `match_status` for `browse_not_found`, PROCESS_ACTION=ask_for_new_direction.',
           '- Se o lead pedir outra opcao da mesma area, consulte novamente o conhecimento com a nova busca antes de listar cursos.',
           '- Se houver falha tecnica na consulta, explique brevemente que o catalogo oficial nao respondeu agora e nunca confirme curso por suposicao.',
           `- Curso para exibir ao lead: ${extractBaseCourseName(String(forcedLookupResult?.matched_courses?.[0] || '')) || '(nao confirmado)'}.`,
-          '- Nao use frase pronta, template fixo ou voz estrutural propria.',
         ].join('\n'),
       });
 
@@ -2112,21 +2621,17 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ) {
         out.pendingCriterionBefore = 'course';
         out.pendingCriterionAfter = 'catalog_area_selection';
-        out.allowedIntent = 'explain_many_courses_and_ask_area_to_be_assertive';
+        out.allowedIntent = 'ask_catalog_area';
         out.processAction = 'ask_catalog_area';
-        out.conversationalBehavior = 'human_explanation_before_area_question';
+        out.conversationalBehavior = 'ask_catalog_area';
         messages.push({
           role: 'system',
           content: [
             'EXPLORACAO AMPLA DE CATALOGO',
             '- O lead pediu para conhecer cursos/opcoes/graduações em geral.',
             '- Nao liste cursos ainda.',
-            '- Explique brevemente que existem muitas opcoes de graduacao.',
-            '- Fale em primeira pessoa: para eu te mostrar melhor e nao te mandar lista enorme de uma vez.',
             '- Pergunte somente com qual area o lead mais se identifica.',
             '- Nao use frases meta como "perguntar sobre a area ajuda", "essa pergunta ajuda" ou "para fins de".',
-            '- Evite voz de formulario, catalogo ou chatbot.',
-            '- A PERSONALITY deve escrever a resposta; nao copie template fixo.',
           ].join('\n'),
         });
       }
@@ -2143,9 +2648,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ) {
         out.pendingCriterionBefore = 'catalog_area_selection';
         out.pendingCriterionAfter = 'course_selection';
-        out.allowedIntent = 'present_real_courses_from_selected_area_and_wait_for_course_choice';
+        out.allowedIntent = 'present_area_courses_and_wait_selection';
         out.processAction = 'present_area_courses_and_wait_selection';
-        out.conversationalBehavior = 'human_bridge_then_area_course_list_without_catalog_voice';
+        out.conversationalBehavior = 'present_area_courses_and_wait_selection';
         out.speakableFacts = {
           ...(out.speakableFacts || {}),
           course_status: 'catalog_area_selected',
@@ -2159,7 +2664,6 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           content: [
             'AREA DO CATALOGO ESCOLHIDA',
             `- Area escolhida: ${requestedArea}.`,
-            '- Reaja humanamente e de forma curta a escolha da area.',
             '- Liste somente os cursos reais de `related_area_courses`.',
             '- Use formato obrigatório:',
             `*${requestedArea}*`,
@@ -2178,40 +2682,105 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       )) {
         out.pendingCriterionBefore = 'course';
         out.pendingCriterionAfter = 'city';
-        out.allowedIntent = 'confirm_course_available_and_ask_city';
+        out.allowedIntent = 'ask_city';
         out.processAction = 'ask_city';
-        out.conversationalBehavior = 'acknowledge_course_or_line_choice_and_ask_city';
+        out.conversationalBehavior = 'ask_city';
         out.speakableFacts = {
           ...(out.speakableFacts || {}),
           city: null,
           pending_criterion_before: 'course',
           pending_criterion_after: 'city',
         };
-        out.text = normalizeMessageText(buildE1ConfirmedAvailableAskCityReply({
-          leadFirstName,
-          courseName: deriveSpeakableCourseName(String(out.speakableFacts?.course_name || currentCourseInterest || ''), currentSalesContext),
-        }));
-        out.rawModelOutput = out.text;
-        out.outputBeforeGovernance = out.text;
-        out.deterministicReplyUsed = true;
-        out.responseOrigin = 'structural_fallback';
-        return out;
+        messages.push({
+          role: 'system',
+          content: 'CURSO SELECIONADO DO CATALOGO: siga o contrato ask_city com a PERSONALITY ativa. Nao verbalize availability interna.',
+        });
       }
     }
   }
 
+  const debugLlmTraceEnabled = isLocalDebugLlmTraceEnabled(input.env);
+  const updateLlmTrace = (extra: Record<string, unknown> = {}) => {
+    if (!debugLlmTraceEnabled) return;
+    out.llmTrace = sanitizeLlmTraceValue({
+      ...(out.llmTrace || {}),
+      lead_id: input.leadId,
+      tenant_id: input.tenantId,
+      subagent: input.subagent,
+      stage_before: input.etapaAtual,
+      trigger: input.trigger,
+      model,
+      effective_temperature: temperature,
+      prompt_id: promptId,
+      personality_prompt_id: personalityPromptId,
+      stage_prompt_id: stagePromptId,
+      personality: renderedPersonality,
+      stage_prompt: stagePrompt,
+      final_system_prompt: prompt,
+      ordered_system_messages: messages
+        .map((message, index) => ({ message, index }))
+        .filter((entry) => entry.message.role === 'system')
+        .map((entry) => ({
+          index: entry.index,
+          content: entry.message.content ?? null,
+        })),
+      messages_sent_to_model: traceMessages(messages),
+      history,
+      stage_contract: stabilizedStageContract,
+      response_contract: {
+        processAction: out.processAction || stabilizedStageContract.processAction || null,
+        pendingCriterionBefore,
+        pendingCriterionAfter,
+        conversationalBehavior: out.conversationalBehavior || stabilizedStageContract.conversationalBehavior || null,
+        allowedIntent: out.allowedIntent || stabilizedStageContract.allowedIntent || null,
+        speakableFacts: out.speakableFacts || stabilizedStageContract.speakableFacts || null,
+        classificationReason: stageState.classificationReason || null,
+      },
+      processAction: out.processAction || stabilizedStageContract.processAction || null,
+      pendingCriterion: pendingCriterionAfter || null,
+      pendingCriterionBefore,
+      pendingCriterionAfter,
+      conversationalBehavior: out.conversationalBehavior || stabilizedStageContract.conversationalBehavior || null,
+      allowedIntent: out.allowedIntent || stabilizedStageContract.allowedIntent || null,
+      speakableFacts: out.speakableFacts || stabilizedStageContract.speakableFacts || null,
+      classificationReason: stageState.classificationReason || null,
+      regeneration_context: input.regenerationContext || null,
+      tool_results: out.toolCalls || [],
+      first_raw_output: out.rawModelOutput || null,
+      regeneration_output: out.regeneratedOutput || null,
+      final_output_from_subagent: out.text || null,
+      deterministic_reply_used: out.deterministicReplyUsed === true,
+      fallback_used: out.fallbackUsed === true,
+      fallback_reason: out.fallbackReason || null,
+      ...extra,
+    }) as Record<string, unknown>;
+  };
+
   for (let i = 0; i < maxIterations; i += 1) {
     out.iterations = i + 1;
+    const toolChoice = input.regenerationContext
+      || (
+        input.etapaAtual === 'E3'
+        && String(out.processAction || stabilizedStageContract.processAction) === 'present_e3_structured_blocks'
+      )
+      ? 'none'
+      : 'auto';
 
     if (tracePrompts) {
       console.log(`[subagent] llm_call stage=${input.subagent} iteration=${i + 1} prompt_id=${promptId} messages=${messages.length}`);
     }
 
+    updateLlmTrace({
+      phase: 'before_openai_call',
+      iteration: i + 1,
+      tool_choice: toolChoice,
+    });
+
     const res = await chatCompletions(apiKey, {
       model,
       messages,
       tools: toolSpecs,
-      tool_choice: input.regenerationContext ? 'none' : 'auto',
+      tool_choice: toolChoice,
       parallel_tool_calls: true,
       temperature,
     });
@@ -2232,7 +2801,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           const forcedLookupResult = out.toolCalls[out.toolCalls.length - 1]?.result as Record<string, unknown> | undefined;
           messages.push({
             role: 'system',
-            content: 'CONSULTA OBRIGATORIA DE CURSO EXECUTADA PELO SISTEMA. Agora responda apenas com base no retorno da tool consultar_conhecimento. Os fatos devem seguir a tool, mas a redacao deve seguir o prompt da etapa, a PERSONALITY e as regras da dashboard. Nao use frase pronta ou voz estrutural propria.',
+            content: 'CONSULTA OBRIGATORIA DE CURSO EXECUTADA PELO SISTEMA. O retorno da tool consultar_conhecimento atualizou apenas fatos/estado deste turno. Responda usando o estado atualizado e o contrato estrutural vigente.',
           });
           if (tracePrompts) {
             console.log(`[subagent] prompt_preserved_after_forced_lookup stage=${input.subagent} iteration=${i + 1} prompt_id=${promptId} system_messages=${messages.filter((item) => item.role === 'system').length}`);
@@ -2261,7 +2830,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           });
           messages.push({
             role: 'system',
-            content: 'UMA SEGUNDA CONSULTA DE CURSO FOI EXECUTADA COM QUERY SIMPLIFICADA. Agora responda apenas com base no retorno da tool consultar_conhecimento. Os fatos devem seguir a tool, mas a redacao deve seguir o prompt da etapa e as regras da dashboard. `found` confirma curso. `ambiguous_found` pede escolha da linha. `browse_found` confirma lista por area/filtro.',
+            content: 'UMA SEGUNDA CONSULTA DE CURSO FOI EXECUTADA COM QUERY SIMPLIFICADA. O retorno da tool consultar_conhecimento atualizou apenas fatos/estado deste turno. Responda usando o estado atualizado e o contrato estrutural vigente.',
           });
           if (tracePrompts) {
             console.log(`[subagent] prompt_preserved_after_retry_lookup stage=${input.subagent} iteration=${i + 1} prompt_id=${promptId} system_messages=${messages.filter((item) => item.role === 'system').length}`);
@@ -2271,9 +2840,79 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       }
 
       const rawText = msg.content ?? undefined;
+      const isE3Presentation = input.etapaAtual === 'E3'
+        && String(out.processAction || '') === 'present_e3_structured_blocks';
+      const isE3CourseFollowupReply = input.etapaAtual === 'E3'
+        && String(out.processAction || '') === 'handle_e3_course_followup';
       out.rawModelOutput = rawText || null;
-      out.text = rawText ? normalizeMessageText(rawText) : rawText;
+      out.text = rawText ? normalizeMessageText(rawText, isE3Presentation || isE3CourseFollowupReply) : rawText;
       out.outputBeforeGovernance = out.text || null;
+      if (isE3Presentation) {
+        const e3AtomicMessages = coerceE3PresentationAtomicMessages(out.text);
+        const e3Validation = validateE3PresentationBlocks({
+          blocks: e3AtomicMessages,
+          courseName: String(currentCourseInterest || currentSalesContext.course_display_name || ''),
+          modality: String(currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || ''),
+          motivation: String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || ''),
+          authorizedClaimKeys: authorizedFactsForStage.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean),
+        });
+        if (!e3Validation.valid && i < maxIterations - 1) {
+          messages.push({
+            role: 'system',
+            content: [
+              'VIOLACAO DA E3: ' + e3Validation.violations.join(', ') + '.',
+              'Entregue exatamente 4 mensagens: 3 blocos de apresentacao e uma 4a pergunta final. Use uma linha contendo somente --- entre cada mensagem, totalizando 3 separadores.',
+              ...(e3Validation.violations.includes('missing_specific_motivation_connection') ? [
+                `O motivo concreto do lead e: ${String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')}.`,
+                `Mencione naturalmente uma destas referencias no bloco de curso ou suporte: ${extractE3MotivationAnchors(String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')).join(', ')}.`,
+                'Nao use frase generica sobre objetivos; deixe claro que entendeu o caso desta pessoa.',
+              ] : []),
+              ...(e3Validation.violations.some((item) => item.startsWith('missing_institution_') || ['missing_international_diploma_recognition', 'missing_university_advantage', 'missing_maximum_mec_rating', 'missing_maximum_mec_since_beginning'].includes(item)) ? [
+                'O primeiro bloco deve integrar todos os diferenciais institucionais autorizados recebidos no contexto, sem omitir nenhum deles.',
+              ] : []),
+              'Siga integralmente o prompt da dashboard para conteudo, selecao de fatos, tom e pergunta final.',
+              'Nao use fallback; escreva com PERSONALITY.',
+            ].join('\n'),
+          });
+          continue;
+        }
+        if (e3Validation.valid) {
+          out.atomicMessages = e3AtomicMessages;
+          await input.supabase
+            .from('leads')
+            .update({
+              sales_context: {
+                ...currentSalesContext,
+                e3_presentation_complete: true,
+                e3_presentation_completed_at: new Date().toISOString(),
+                e3_presentation_blocks_sent: ['institution', 'course', 'study_experience', 'closing_question'],
+                e3_institutional_claims_pending: authorizedFactsForStage.map((fact: any) => fact.claim_key).filter(Boolean),
+                e3_interest_signal_captured: false,
+                pending_criterion: 'interest_signal',
+                last_agent_question_type: 'interest_signal',
+              },
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', input.leadId);
+        }
+        if (!e3Validation.valid) {
+          out.text = '';
+          out.outputBeforeGovernance = null;
+          out.atomicMessages = [];
+          out.stageContractViolation = true;
+          out.forbiddenTopicsDetected = [...(out.forbiddenTopicsDetected || []), ...e3Validation.violations];
+          break;
+        }
+      } else if (isE3CourseFollowupReply && out.text) {
+        const followupParts = splitE3AtomicMessages(out.text);
+        if (followupParts.length <= 2) {
+          out.atomicMessages = followupParts;
+        } else {
+          out.text = normalizeMessageText(out.text);
+          out.outputBeforeGovernance = out.text;
+          out.atomicMessages = [out.text];
+        }
+      }
       if (input.regenerationContext) {
         out.originalOutput = input.regenerationContext.originalOutput || null;
         out.regeneratedOutput = out.text || null;
@@ -2283,8 +2922,47 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         out.responseOrigin = 'llm_regeneration';
       }
       if (out.text) {
+        if (
+          input.etapaAtual === 'E1'
+          && stageState.classificationReason === 'resolved_pending_motivation'
+          && pendingCriterionAfter === null
+        ) {
+          out.processAction = 'complete_stage';
+          out.allowedIntent = 'complete_e1_and_handoff_to_e2';
+          out.conversationalBehavior = 'complete_stage';
+          out.pendingCriterionAfter = null;
+        }
         out.text = sanitizeStageHandoffText(out.text, input.trigger, input.subagent);
+        if (input.etapaAtual === 'E1') {
+          const sanitizerResult = sanitizeE1CompleteStageText(out.text, out.processAction);
+          out.text = sanitizerResult.text;
+          if (sanitizerResult.applied) {
+            (out as any).sanitizerApplied = true;
+            (out as any).sanitizerReason = sanitizerResult.reason;
+            (out as any).sanitizerBefore = sanitizerResult.before;
+            (out as any).sanitizerAfter = sanitizerResult.after;
+          }
+          if (input.regenerationContext) out.regeneratedOutput = out.text || null;
+        }
+        if (input.etapaAtual === 'E2') {
+          const sanitizedE2Text = sanitizeE2CurrentCriterionText(out.text, out.processAction, latestUserMessage);
+          if (sanitizedE2Text !== out.text) {
+            (out as any).sanitizerApplied = true;
+            (out as any).sanitizerReason = 'e2_resolved_operational_preamble';
+            (out as any).sanitizerBefore = out.text;
+            (out as any).sanitizerAfter = sanitizedE2Text;
+            out.text = sanitizedE2Text;
+            if (input.regenerationContext) out.regeneratedOutput = out.text || null;
+          }
+        }
       }
+      updateLlmTrace({
+        phase: input.regenerationContext ? 'after_regeneration_output' : 'after_first_raw_output',
+        iteration: i + 1,
+        first_raw_output: input.regenerationContext ? (out.originalOutput || null) : (out.rawModelOutput || null),
+        regeneration_output: input.regenerationContext ? (out.regeneratedOutput || out.text || null) : null,
+        final_output_from_subagent: out.text || null,
+      });
       break;
     }
 
@@ -2340,8 +3018,22 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       }
     }
 
+    updateLlmTrace({
+      phase: 'after_tool_results',
+      iteration: i + 1,
+      tool_results: out.toolCalls || [],
+    });
+
     if (out.handoff) break;
   }
+
+  updateLlmTrace({
+    phase: 'returning_subagent_output',
+    tool_results: out.toolCalls || [],
+    first_raw_output: out.rawModelOutput || null,
+    regeneration_output: out.regeneratedOutput || null,
+    final_output_from_subagent: out.text || null,
+  });
 
   return out;
 }

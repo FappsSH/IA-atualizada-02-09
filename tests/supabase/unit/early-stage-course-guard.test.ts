@@ -12,17 +12,15 @@ describe('early stage course guard', () => {
         )).toBe(true);
     });
 
-    it('fallback de E1 para cidade nao vaza detalhes de produto', () => {
+    it('fallback legado de E1 para cidade permanece desativado', () => {
         const text = buildE1AskCityFallback('Administração Pública');
-        expect(text).toContain('Administração Pública');
-        expect(text).toContain('cidade');
+        expect(text).toBe('');
         expect(mentionsEarlyStageCourseDetails(text)).toBe(false);
     });
 
-    it('fallback de E1 para motivacao nao vaza detalhes de produto', () => {
+    it('fallback legado de E1 para motivacao permanece desativado', () => {
         const text = buildE1AskMotivationFallback('Farmácia');
-        expect(text).toContain('Farmácia');
-        expect(text).toContain('sonho');
+        expect(text).toBe('');
         expect(mentionsEarlyStageCourseDetails(text)).toBe(false);
     });
 });

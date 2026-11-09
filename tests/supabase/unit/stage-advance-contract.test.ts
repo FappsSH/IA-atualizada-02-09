@@ -116,6 +116,58 @@ describe('tool_consultar_conhecimento', () => {
         expect((supabase.tables.leads.rows[0].sales_context as any).linha_formacao).toBe('Licenciatura');
     });
 
+    it('resolve alias curto dentro de uma pergunta comercial completa', async () => {
+        const supabase = createSupabaseMock({
+            leads: [{
+                id: 'lead-alias',
+                tenant_id: 'tenant-1',
+                etapa_atual: 'E1',
+                nome: 'Helton',
+                cidade: null,
+                curso_interesse: null,
+                modalidade: null,
+                dor_principal: null,
+                sales_context: {},
+            }],
+            course_catalog_entries: [{
+                tenant_id: 'tenant-1',
+                active: true,
+                display_name: 'ADMINISTRACAO (BACHARELADO)',
+                canonical_name: 'Administracao',
+                normalized_search_text: 'administracao bacharelado ead adm',
+                degree_level: 'bacharelado',
+                delivery_mode: 'ead',
+                duration_text: '8 semestres - 4 anos',
+                area_slug: 'gestao-negocios',
+                area_name: 'Gestao e Negocios',
+                source_key: 'cursos_area_gestao_negocios',
+                course_catalog_aliases: [{
+                    alias_text: 'ADM',
+                    normalized_alias_text: 'adm',
+                    alias_kind: 'short',
+                    is_primary: false,
+                }],
+            }],
+            mensagens: [],
+        });
+
+        const result = await tool_consultar_conhecimento({
+            supabase,
+            tenantId: 'tenant-1',
+            leadId: 'lead-alias',
+            telefone: '5511999999999',
+            env: { CURRENT_SUBAGENT: 'E1' },
+        }, {
+            tipo: 'course',
+            query: 'Quanto esta o curso de adm?',
+        });
+
+        expect(result.match_status).toBe('found');
+        expect(result.matched_courses).toEqual(['Administracao']);
+        expect(supabase.tables.leads.rows[0].curso_interesse).toBe('ADMINISTRACAO (BACHARELADO)');
+        expect((supabase.tables.leads.rows[0].sales_context as any).course_status).toBe('confirmed_available');
+    });
+
     it('resolve segmento fechado para curso indisponivel e oferece alternativas reais', async () => {
         const supabase = createSupabaseMock({
             leads: [{
