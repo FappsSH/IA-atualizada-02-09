@@ -9,13 +9,15 @@ param(
   [string]$EvolutionFiltro = "evolution"
 )
 
-$ErrorActionPreference = "Stop"
+# Continue: no PowerShell 5.1, avisos que o docker/npx escrevem no stderr nao podem derrubar o script.
+# Erros reais sao checados por $LASTEXITCODE e throw.
+$ErrorActionPreference = "Continue"
 $proj = (Get-Location).Path
 if (-not (Test-Path "$proj\supabase\config.toml")) {
   throw "Rode este script dentro da pasta do projeto AgentHub (onde existe supabase\config.toml)."
 }
 
-docker info *> $null
+docker info 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Docker nao esta rodando. Abra o Docker Desktop e tente de novo." }
 
 $volDir = Join-Path $Destino "volumes"

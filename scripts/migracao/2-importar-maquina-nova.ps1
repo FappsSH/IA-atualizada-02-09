@@ -7,14 +7,16 @@ param(
   [string]$Origem = "C:\agenthub-backup"
 )
 
-$ErrorActionPreference = "Stop"
+# Continue: no PowerShell 5.1, avisos que o docker/npx escrevem no stderr nao podem derrubar o script.
+# Erros reais sao checados por $LASTEXITCODE e throw.
+$ErrorActionPreference = "Continue"
 $proj = (Get-Location).Path
 if (-not (Test-Path "$proj\supabase\config.toml")) {
   throw "Rode este script dentro da pasta do projeto AgentHub (onde existe supabase\config.toml)."
 }
 if (-not (Test-Path "$Origem\volumes")) { throw "Nao achei $Origem\volumes. Copie a pasta de backup para ca primeiro." }
 
-docker info *> $null
+docker info 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Docker nao esta rodando. Abra o Docker Desktop e tente de novo." }
 
 Write-Host "`n[1/5] Restaurando arquivos de configuracao..." -ForegroundColor Cyan
