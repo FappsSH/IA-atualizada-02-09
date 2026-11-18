@@ -65,6 +65,19 @@ foreach ($t in Get-ChildItem $volDir -Filter *.tgz) {
 }
 
 Write-Host "[4/5] Subindo Supabase local..." -ForegroundColor Cyan
+# O nome dos volumes restaurados (supabase_db_<id>) define o project_id que o Supabase precisa usar.
+$dbTgz = Get-ChildItem $volDir -Filter "supabase_db_*.tgz" | Select-Object -First 1
+if ($dbTgz) {
+  $idBackup = ($dbTgz.Name -replace '^supabase_db_', '') -replace '\.tgz$', ''
+  $cfg = "$proj\supabase\config.toml"
+  $linhas = Get-Content $cfg
+  $idAtual = ($linhas | Select-String '^\s*project_id\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+  if ($idAtual -ne $idBackup) {
+    Write-Host "   ajustando project_id do config.toml: $idAtual -> $idBackup"
+    $novo = $linhas | ForEach-Object { if ($_ -match '^\s*project_id\s*=') { "project_id = `"$idBackup`"" } else { $_ } }
+    [System.IO.File]::WriteAllLines($cfg, $novo)
+  }
+}
 npx.cmd supabase start
 if ($LASTEXITCODE -ne 0) { throw "supabase start falhou. Me mande a saida." }
 

@@ -80,7 +80,9 @@ foreach ($d in $evoPastas) {
 }
 
 Write-Host "[4/6] Parando Supabase e Evolution (os dados ficam guardados)..." -ForegroundColor Cyan
-& "$proj\node_modules\.bin\supabase.cmd" stop
+& "$proj\node_modules\.bin\supabase.cmd" stop --project-id $SupabaseProjeto
+# garante que nenhum container do Supabase ficou de pe
+docker ps -q --filter "name=_$SupabaseProjeto" | ForEach-Object { docker stop $_ | Out-Null }
 foreach ($p in $evoProjetos) { docker compose -p $p stop }
 foreach ($c in $evoContainers) { docker stop $c *> $null }
 
