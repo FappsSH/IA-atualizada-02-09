@@ -4431,6 +4431,8 @@ serve(async (req) => {
             const outboundParts = Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0
                 ? out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean)
                 : [out.text];
+            const sendInstitutionImage = finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks';
+            let institutionImageSent = false;
             let totalSent = 0;
             const governedOutputParts: string[] = [];
             const senderPayloadParts: string[] = [];
@@ -4453,6 +4455,7 @@ serve(async (req) => {
                     tool_calls: out.toolCalls ?? [],
                     skip_takeover: out.skipTakeoverSend === true,
                     skip_governance: outboundParts.length > 1 || (finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks'),
+                    send_institution_image: sendInstitutionImage && !institutionImageSent,
                     final_output_source: out.finalOutputSource || out.responseOrigin || 'raw_model',
                 }),
                 });
@@ -4468,6 +4471,7 @@ serve(async (req) => {
                 governedOutputParts.push(...(Array.isArray(sendData.governed_output_parts) ? sendData.governed_output_parts.map((part: unknown) => String(part || '')) : []));
                 senderPayloadParts.push(...(Array.isArray(sendData.sender_payload_parts) ? sendData.sender_payload_parts.map((part: unknown) => String(part || '')) : [outboundText]));
                 sentOutputParts.push(...(Array.isArray(sendData.sent_output_parts) ? sendData.sent_output_parts.map((part: unknown) => String(part || '')) : []));
+                institutionImageSent = institutionImageSent || sendData?.institution_media_sent === true;
                 console.log(`[ai-processor] mensagem(ns) enviada(s) — total: ${sendData.mensagens_enviadas ?? 1}`);
                 if (sendData?.ok === false || sendData?.first_error) {
                     console.error(`[ai-processor] detalhe do sender: ${sendData?.first_error ?? 'envio sem sucesso'}`);

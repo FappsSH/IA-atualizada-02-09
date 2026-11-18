@@ -35,6 +35,13 @@ function normalizeCourseText(text: string) {
         .trim();
 }
 
+function courseHasInternship(entry: any) {
+    const area = normalizeCourseText(`${entry?.area_slug || ''} ${entry?.area_name || ''}`);
+    return entry?.has_internship === true
+        || String(entry?.degree_level || '') === 'licenciatura'
+        || (String(entry?.degree_level || '') === 'bacharelado' && area.includes('saude'));
+}
+
 function stripCourseLookupIntentPrefix(text: string) {
     return normalizeCourseText(text)
         .replace(
@@ -102,7 +109,9 @@ function looksLikeE1MotivationOnly(value: unknown) {
         'objetivo pessoal',
         'objetivo profissional',
         'ja trabalho',
+        'ja trabalhei',
         'trabalho na area',
+        'trabalhei na area',
         'trabalho nessa area',
         'atuo na area',
         'quero crescer',
@@ -1520,6 +1529,7 @@ export async function tool_consultar_conhecimento(
                         available_course_lines: availableCourseLines,
                         curso_base_nome: normalizeBaseCourseName(finalMatchedCourses[0] || ''),
                         modalidade_oferta: deliveryMode || null,
+                        has_internship: courseHasInternship(matchedEntryForPersistence),
                         available_catalog_areas: [],
                         requested_area_slug: normalizedCourseState.requested_area_slug,
                         requested_area_name: normalizedCourseState.requested_area_name,
@@ -1635,6 +1645,7 @@ export async function tool_consultar_conhecimento(
                 modalidade: item.course?.delivery_mode || null,
                 duracao: item.course?.duration_text || null,
                 grau: item.course?.degree_level || null,
+                has_internship: courseHasInternship(item.course),
                 score: item.score,
                 fonte: item.fonte || resultSource,
             })),

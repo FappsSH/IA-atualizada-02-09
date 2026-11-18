@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildE3PresentationMessages, formatDurationYearsFromSemesters } from '../../../supabase/functions/ai-processor/e3-presentation.ts';
+import { courseHasInternship } from '../../../scripts/course-catalog-dataset.ts';
 
 const adminFacts = [
   { claim_key: 'institution_is_university', category: 'institution', content: 'A Universidade Cruzeiro do Sul é uma Universidade.' },
@@ -23,7 +24,7 @@ describe('E3 structural presentation', () => {
     expect(formatDurationYearsFromSemesters(5)).toBe('2 anos e meio');
   });
 
-  it('gera 3 blocos na ordem instituicao curso fechamento', () => {
+  it('gera 3 blocos na ordem curso estagio/conexao fechamento', () => {
     const result = buildE3PresentationMessages({
       authorizedFacts: adminFacts,
       leadSnapshot: {
@@ -34,22 +35,40 @@ describe('E3 structural presentation', () => {
         sales_context: {
           course_display_name: 'CST em Radiologia',
           duration_semesters: 6,
+          has_internship: true,
         },
       },
     });
 
     expect(result.messages).toHaveLength(3);
-    expect(result.messages[0]).toContain('Cruzeiro do Sul');
-    expect(result.messages[1]).toContain('Radiologia');
-    expect(result.messages[1]).toContain('6 semestres');
-    expect(result.messages[1]).toContain('3 anos');
-    expect(result.messages[1]).toContain('EAD');
+    expect(result.messages[0]).toContain('Radiologia');
+    expect(result.messages[0]).toContain('6 semestres');
+    expect(result.messages[0]).toContain('3 anos');
+    expect(result.messages[0]).toContain('EAD');
+    expect(result.messages[1]).toContain('estagio');
+    expect(result.messages[1]).toContain('cidade');
     expect(result.messages[2]).toContain('Jessica');
-    expect(result.messages.join('\n')).toContain('mais de 60 anos');
-    expect(result.messages.join('\n')).toContain('nota máxima no MEC');
-    expect(result.messages.join('\n')).toContain('reconhecimento também fora do Brasil');
-    expect(result.messages.join('\n')).toContain('nota máxima no MEC desde quando começou');
-    expect(result.messages.join('\n')).toContain('melhores do Brasil');
+    });
+
+  it('apresenta a ausencia de estagio como vantagem', () => {
+    const result = buildE3PresentationMessages({
+      leadSnapshot: {
+        curso_interesse: 'Administracao',
+        sales_context: {
+          course_display_name: 'Administracao',
+          has_internship: false,
+        },
+      },
+    });
+
+    expect(result.messages[1]).toContain('nao tem estagio');
+    expect(result.messages[1]).toContain('deslocamento');
+  });
+
+  it('deriva estagio para toda licenciatura e bacharelado da saude', () => {
+    expect(courseHasInternship({ degree_level: 'licenciatura', area_slug: 'educacao', area_name: 'Educacao' })).toBe(true);
+    expect(courseHasInternship({ degree_level: 'bacharelado', area_slug: 'saude-beleza', area_name: 'Saude e Beleza' })).toBe(true);
+    expect(courseHasInternship({ degree_level: 'bacharelado', area_slug: 'gestao-negocios', area_name: 'Gestao e Negocios' })).toBe(false);
   });
 
   it('nao verbaliza claims administrativos sem fonte ativa recebida', () => {

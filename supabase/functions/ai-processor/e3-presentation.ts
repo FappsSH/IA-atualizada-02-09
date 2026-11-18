@@ -45,29 +45,11 @@ export function buildE3PresentationMessages(params: {
   const durationYears = formatDurationYearsFromSemesters(durationSemesters)
     || String(salesContext.duration_years_text || '').trim();
   const modality = normalizeModality(salesContext.modalidade_oferta || salesContext.delivery_mode || lead.modalidade);
+  const hasInternship = typeof salesContext.has_internship === 'boolean'
+    ? salesContext.has_internship
+    : null;
+  const motivation = String(salesContext.motivacao_principal || lead.dor_principal || '').trim();
   const firstName = getTrustedOpeningFirstName(lead);
-
-  const institutionFacts = [
-    'Vamos la entao, quero te apresentar alguns pontos importantes da Cruzeiro do Sul.',
-    hasFact('institution_is_university')
-      ? String(factByKey.get('institution_is_university')?.content || '')
-      : '',
-    hasFact('institution_diploma_international_recognition')
-      ? String(factByKey.get('institution_diploma_international_recognition')?.content || '')
-      : '',
-    hasFact('institution_university_advantage_vs_college')
-      ? String(factByKey.get('institution_university_advantage_vs_college')?.content || '')
-      : '',
-    hasFact('institution_60_plus_years')
-      ? String(factByKey.get('institution_60_plus_years')?.content || '')
-      : '',
-    hasFact('institution_maximum_mec_rating')
-      ? String(factByKey.get('institution_maximum_mec_rating')?.content || '')
-      : '',
-    hasFact('institution_maximum_mec_since_beginning')
-      ? String(factByKey.get('institution_maximum_mec_since_beginning')?.content || '')
-      : '',
-  ].filter(Boolean);
 
   const modalityFacts = authorizedFacts
     .filter((fact) => fact.category === 'course_methodology')
@@ -80,6 +62,7 @@ export function buildE3PresentationMessages(params: {
 
   const courseFacts = [
     `Sobre ${courseName}, a ideia aqui e te mostrar de forma bem clara como essa formacao pode encaixar no seu momento.`,
+    motivation ? `E isso conversa diretamente com o motivo que voce compartilhou: ${motivation}.` : '',
     durationText && durationYears
       ? `O curso tem duracao de ${durationText}, ou seja, em ${durationYears} voce ja pode estar com seu diploma em maos.`
       : durationText
@@ -92,12 +75,20 @@ export function buildE3PresentationMessages(params: {
       ? 'A forma de estudo e semipresencial, com acompanhamento pela plataforma conforme funcionamento autorizado do curso.'
       : '',
     ...modalityFacts,
+  ].filter(Boolean);
+
+  const supportAndInternshipFacts = [
     ...tutoringFacts,
+    hasInternship === true
+      ? 'E como esse curso tem estagio, caso voce nao tenha condicoes de se deslocar ao polo semipresencial, ele pode ser realizado na sua propria cidade.'
+      : hasInternship === false
+        ? 'E como esse curso nao tem estagio, voce nao precisa se preocupar com deslocamento para realizar essa etapa da formacao.'
+        : '',
   ].filter(Boolean);
 
   const closing = firstName
-    ? `De todos esses pontos que eu trouxe pra voce ${firstName}, tem algum em especifico que voce tem alguma duvida?`
-    : 'De todos esses pontos que eu trouxe pra voce, tem algum em especifico que ficou com duvida?';
+    ? `De todos esses pontos que eu trouxe pra voce ${firstName}, o que mais chamou sua atencao e mais fez sentido pra voce?`
+    : 'De todos esses pontos que eu trouxe pra voce, o que mais chamou sua atencao e mais fez sentido pra voce?';
 
   const expectedClaims = [
     'institution_is_university',
@@ -115,8 +106,8 @@ export function buildE3PresentationMessages(params: {
 
   return {
     messages: [
-      institutionFacts.join('\n\n'),
       courseFacts.join('\n\n'),
+      supportAndInternshipFacts.join('\n\n'),
       closing,
     ],
     pendingClaims,
@@ -125,6 +116,7 @@ export function buildE3PresentationMessages(params: {
       duration_semesters: durationSemesters || null,
       duration_years: durationYears || null,
       modality: modality || null,
+      has_internship: hasInternship,
       e3_authorized_facts: authorizedFacts,
     },
   };

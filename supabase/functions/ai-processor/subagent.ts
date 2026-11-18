@@ -461,25 +461,11 @@ function splitE3AtomicMessages(text: string | undefined) {
 }
 
 function coerceE3PresentationAtomicMessages(text: string | undefined) {
-  const direct = splitE3AtomicMessages(text);
-  if (direct.length !== 3) return direct;
-
-  const finalParagraphs = direct[2]
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const questionIndex = finalParagraphs.findLastIndex((part) =>
-    part.includes('?')
-    && /(chamou.*atencao|fez sentido|mais gostou|mais sentido|mais chamou)/.test(normalizeIntentText(part))
-  );
-  if (questionIndex <= 0) return direct;
-
-  return [
-    direct[0],
-    direct[1],
-    finalParagraphs.slice(0, questionIndex).join('\n\n'),
-    finalParagraphs.slice(questionIndex).join('\n\n'),
-  ].filter(Boolean);
+  const blocks = splitE3AtomicMessages(text);
+  // Modelos ainda podem incluir um bloco institucional textual legado;
+  // a imagem fixa já cobre essa informação, então remova-o e preserve
+  // somente curso, conexão/estágio e pergunta final.
+  return blocks.length === 4 ? blocks.slice(1) : blocks;
 }
 
 function extractE3MotivationAnchors(motivation: string) {
@@ -499,35 +485,14 @@ function validateE3PresentationBlocks(params: {
   courseName: string;
   modality: string;
   motivation: string;
+  hasInternship?: boolean | null;
   authorizedClaimKeys: string[];
 }) {
   const blocks = params.blocks.map((block) => normalizeIntentText(block));
   const violations: string[] = [];
-  if (blocks.length !== 4) return { valid: false, violations: ['invalid_message_count'] };
+  if (blocks.length !== 3) return { valid: false, violations: ['invalid_message_count'] };
 
-  const [institution, course, support, question] = blocks;
-  if (!/(universidade|instituicao|cruzeiro|mec|diploma|reconhecimento|anos de mercado|historia)/.test(institution || '')) {
-    violations.push('missing_institution_presentation');
-  }
-  const authorizedClaims = new Set(params.authorizedClaimKeys || []);
-  if (authorizedClaims.has('institution_is_university') && !/(universidade|cruzeiro do sul)/.test(institution || '')) {
-    violations.push('missing_institution_university_status');
-  }
-  if (authorizedClaims.has('institution_diploma_international_recognition') && !/(fora do brasil|exterior|outros paises|reconhecimento internacional|reconhecid[oa] internacionalmente|validade em outros paises)/.test(institution || '')) {
-    violations.push('missing_international_diploma_recognition');
-  }
-  if (authorizedClaims.has('institution_university_advantage_vs_college') && !/(faculdade|centro universitario|diferencial|mesma forma)/.test(institution || '')) {
-    violations.push('missing_university_advantage');
-  }
-  if (authorizedClaims.has('institution_60_plus_years') && !/\b6[0-9]\s*anos\b/.test(institution || '')) {
-    violations.push('missing_institution_history');
-  }
-  if (authorizedClaims.has('institution_maximum_mec_rating') && !/(nota maxima|conceito maximo).*(mec)|mec.*(nota maxima|conceito maximo)/.test(institution || '')) {
-    violations.push('missing_maximum_mec_rating');
-  }
-  if (authorizedClaims.has('institution_maximum_mec_since_beginning') && !/(desde o inicio|desde que comecou|desde quando comecamos|nota maxima.*mec|mec.*nota maxima)/.test(institution || '')) {
-    violations.push('missing_maximum_mec_since_beginning');
-  }
+  const [course, support, question] = blocks;
 
   const normalizedCourse = normalizeIntentText(String(params.courseName || '').split('(')[0].trim());
   const conciseCourse = normalizedCourse.replace(/^(cst em|bacharelado em|licenciatura em|tecnologo em)\s+/, '').trim();
@@ -537,18 +502,28 @@ function validateE3PresentationBlocks(params: {
   }
   if (!/\b\d+\s*semestres?\b/.test(course) || !/\b\d+\s*anos?\b/.test(course)) violations.push('missing_course_duration');
   if (normalizedModality && !course.includes(normalizedModality)) violations.push('missing_course_modality');
+  if (/\b(?:cst|tecnologo)\b/.test(course)) violations.push('technical_course_name_leak');
 
-  if (!/(tutor|suporte|acompanh|atendimento|professor|orienta|estrutura academica)/.test(support || '')) {
-    violations.push('missing_academic_support');
-  }
+  // O suporte institucional/tutoria é apresentado na imagem fixa enviada
+  // antes dos blocos textuais; não exigir essa informação no bloco textual 2.
   const motivationSignal = /(sonho|objetivo|projeto|cresc|mudanc|area|carreira|sempre quis|vontade|construir)/.test(
-    [institution, course, support, question].filter(Boolean).join(' '),
+    [course, support, question].filter(Boolean).join(' '),
   );
   if (String(params.motivation || '').trim() && !motivationSignal) violations.push('missing_motivation_connection');
   const motivationAnchors = extractE3MotivationAnchors(String(params.motivation || ''));
-  const presentationContent = [institution, course, support].filter(Boolean).join(' ');
+  const presentationContent = [course, support].filter(Boolean).join(' ');
   if (motivationAnchors.length > 0 && !motivationAnchors.some((anchor) => presentationContent.includes(anchor))) {
     violations.push('missing_specific_motivation_connection');
+  }
+
+  if (params.hasInternship === true && !/(estagio|estagios)/.test([course, support].join(' '))) {
+    violations.push('missing_internship_information');
+  }
+  if (params.hasInternship === true && !/(cidade|desloc|polo)/.test([course, support].join(' '))) {
+    violations.push('missing_internship_location_guidance');
+  }
+  if (params.hasInternship === false && !/(sem estagio|nao.*estagio|desloc)/.test([course, support].join(' '))) {
+    violations.push('missing_no_internship_advantage');
   }
 
   if (!question || !/(chamou.*atencao|fez sentido|mais gostou|mais sentido|mais chamou)/.test(question)) {
@@ -901,6 +876,7 @@ function buildCourseLookupFactStore(result: Record<string, unknown>, subagent: S
     related_area_course_display_names: Array.isArray(result?.related_area_courses)
       ? result.related_area_courses.map((course) => getCourseDisplayName(String(course || ''))).filter(Boolean)
       : [],
+    has_internship: firstItem?.has_internship === true,
   };
 
   if (subagent === 'E1' || subagent === 'E2') {
@@ -917,6 +893,7 @@ function buildCourseLookupFactStore(result: Record<string, unknown>, subagent: S
     modalidade: firstItem?.modalidade || null,
     duracao: firstItem?.duracao || null,
     grau: firstItem?.grau || null,
+    has_internship: firstItem?.has_internship === true,
   };
 }
 
@@ -1055,6 +1032,7 @@ export interface SubagentInput {
 export interface SubagentOutput {
   text?: string;
   atomicMessages?: string[];
+  sendInstitutionImage?: boolean;
   toolCalls: Array<{ name: string; args: unknown; result?: unknown; blocked?: boolean }>;
   handoff: boolean;
   avancou: boolean;
@@ -1656,7 +1634,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
             ...e3SalesContext,
             e3_presentation_complete: true,
             e3_presentation_completed_at: new Date().toISOString(),
-            e3_presentation_blocks_sent: ['institution', 'course', 'study_experience', 'closing_question'],
+            e3_presentation_blocks_sent: ['institution_image', 'course', 'study_experience', 'closing_question'],
             e3_institutional_claims_pending: presentation.pendingClaims,
             pending_criterion: 'interest_signal',
             last_agent_question_type: 'interest_signal',
@@ -2359,8 +2337,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ] : []),
       ...(input.etapaAtual === 'E3' && String(out.processAction || stabilizedStageContract.processAction) === 'present_e3_structured_blocks' ? [
         '- RESPONSABILIDADE ATUAL: execute integralmente a estrutura editorial definida no prompt da dashboard; ele e a unica fonte editorial da E3.',
-        '- Entregue 3 mensagens de apresentacao ou 3 mensagens de apresentacao mais uma 4a pergunta final, exatamente como o prompt da dashboard determinar para este contexto.',
-        '- Use uma linha contendo somente --- entre mensagens. Para 3 mensagens use 2 separadores; para 4 mensagens use 3 separadores.',
+        '- O runtime enviara primeiro a imagem fixa da instituicao. Nao crie um bloco textual institucional.',
+        '- Entregue exatamente 3 mensagens de texto: apresentacao do curso; conexao do curso com o motivo real do lead e a informacao de estagio; pergunta final.',
+        '- Use uma linha contendo somente --- entre as 3 mensagens, totalizando 2 separadores.',
         '- FACTS e AUTHORIZED_FACTS apenas determinam o que e verdadeiro. A selecao, ordem, profundidade, tom e pergunta final pertencem exclusivamente ao prompt da dashboard.',
         '- PERSONALITY e obrigatoria na redacao: transforme fatos em conversa espontanea, entusiasta e proxima, conectada ao motivo real do lead.',
         `- MOTIVO CONFIRMADO DO LEAD: ${String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || 'nao informado')}.`,
@@ -2373,6 +2352,8 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         '- Antes de enviar, releia como conversa: substitua qualquer sequencia de afirmacoes institucionais por uma explicacao humana, entusiasta e conectada a escolha desta pessoa.',
         '- A estrutura define somente quantidade e finalidade dos blocos. Ela nunca reduz a liberdade de escrita da PERSONALITY dentro dos fatos autorizados.',
         '- Dentro de cada bolha de apresentacao, organize as ideias em paragrafos curtos separados por uma linha em branco. A pergunta final permanece em seu proprio bloco.',
+        '- Se has_internship=true, informe que o estagio pode ser realizado na cidade da pessoa caso ela nao tenha condicoes de se deslocar ao polo semipresencial.',
+        '- Se has_internship=false, use a ausencia de estagio como vantagem: a pessoa nao precisa se preocupar com deslocamento para fazer estagio.',
         '- Respeite integralmente regras da dashboard, incluindo caracteres nao permitidos. Nao use travessao longo.',
         '- Nunca verbalize metadata, instrucoes internas, claim_key ou frases sobre a comunicacao comercial.',
       ] : []),
@@ -2848,12 +2829,17 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       out.text = rawText ? normalizeMessageText(rawText, isE3Presentation || isE3CourseFollowupReply) : rawText;
       out.outputBeforeGovernance = out.text || null;
       if (isE3Presentation) {
-        const e3AtomicMessages = coerceE3PresentationAtomicMessages(out.text);
-        const e3Validation = validateE3PresentationBlocks({
+        let e3AtomicMessages = coerceE3PresentationAtomicMessages(out.text);
+        if (e3AtomicMessages.length === 3) {
+          out.text = e3AtomicMessages.join('\n---\n');
+          out.outputBeforeGovernance = out.text;
+        }
+        let e3Validation = validateE3PresentationBlocks({
           blocks: e3AtomicMessages,
           courseName: String(currentCourseInterest || currentSalesContext.course_display_name || ''),
           modality: String(currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || ''),
           motivation: String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || ''),
+          hasInternship: typeof currentSalesContext.has_internship === 'boolean' ? currentSalesContext.has_internship : null,
           authorizedClaimKeys: authorizedFactsForStage.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean),
         });
         if (!e3Validation.valid && i < maxIterations - 1) {
@@ -2861,14 +2847,19 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
             role: 'system',
             content: [
               'VIOLACAO DA E3: ' + e3Validation.violations.join(', ') + '.',
-              'Entregue exatamente 4 mensagens: 3 blocos de apresentacao e uma 4a pergunta final. Use uma linha contendo somente --- entre cada mensagem, totalizando 3 separadores.',
+              'Entregue exatamente 3 mensagens de texto: apresentacao do curso, conexao com o motivo e estagio, e pergunta final. A imagem fixa da instituicao sera enviada pelo runtime antes delas. Use uma linha contendo somente --- entre cada mensagem, totalizando 2 separadores.',
               ...(e3Validation.violations.includes('missing_specific_motivation_connection') ? [
                 `O motivo concreto do lead e: ${String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')}.`,
                 `Mencione naturalmente uma destas referencias no bloco de curso ou suporte: ${extractE3MotivationAnchors(String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')).join(', ')}.`,
                 'Nao use frase generica sobre objetivos; deixe claro que entendeu o caso desta pessoa.',
               ] : []),
               ...(e3Validation.violations.some((item) => item.startsWith('missing_institution_') || ['missing_international_diploma_recognition', 'missing_university_advantage', 'missing_maximum_mec_rating', 'missing_maximum_mec_since_beginning'].includes(item)) ? [
-                'O primeiro bloco deve integrar todos os diferenciais institucionais autorizados recebidos no contexto, sem omitir nenhum deles.',
+                'A instituicao e apresentada pela imagem fixa; nao repita um bloco textual institucional.',
+              ] : []),
+              ...(e3Validation.violations.includes('missing_internship_information') || e3Validation.violations.includes('missing_internship_location_guidance') || e3Validation.violations.includes('missing_no_internship_advantage') ? [
+                currentSalesContext.has_internship === true
+                  ? 'O curso tem estagio. Informe que ele pode ser realizado na cidade da pessoa caso ela nao tenha condicoes de se deslocar ao polo semipresencial.'
+                  : 'O curso nao tem estagio. Apresente isso como vantagem, destacando que a pessoa nao precisa se preocupar com deslocamento para fazer estagio.',
               ] : []),
               'Siga integralmente o prompt da dashboard para conteudo, selecao de fatos, tom e pergunta final.',
               'Nao use fallback; escreva com PERSONALITY.',
@@ -2876,8 +2867,53 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           });
           continue;
         }
+        if (!e3Validation.valid && i >= maxIterations - 1) {
+          const recoveryPresentation = buildE3PresentationMessages({
+            leadSnapshot: {
+              ...(input.leadSnapshot || {}),
+              curso_interesse: currentCourseInterest || input.leadSnapshot?.curso_interesse || null,
+              modalidade: currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || null,
+              sales_context: currentSalesContext,
+            },
+            authorizedFacts: authorizedFactsForStage,
+          });
+          const recoveryBlocks = recoveryPresentation.messages.map((part) => normalizeMessageText(part, true)).filter(Boolean);
+          const recoveryValidation = validateE3PresentationBlocks({
+            blocks: recoveryBlocks,
+            courseName: String(currentCourseInterest || currentSalesContext.course_display_name || ''),
+            modality: String(currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || ''),
+            motivation: String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || ''),
+            hasInternship: typeof currentSalesContext.has_internship === 'boolean' ? currentSalesContext.has_internship : null,
+            authorizedClaimKeys: authorizedFactsForStage.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean),
+          });
+          if (recoveryValidation.valid) {
+            e3AtomicMessages = recoveryBlocks;
+            out.text = recoveryBlocks.join('\n---\n');
+            out.atomicMessages = recoveryBlocks;
+            out.rawModelOutput = out.rawModelOutput || null;
+            out.outputBeforeGovernance = out.text;
+            out.fallbackUsed = true;
+            out.fallbackReason = 'invalid_e3_presentation_recovered';
+            out.deterministicReplyUsed = true;
+            out.responseOrigin = 'structural_contract_recovery';
+            out.processAction = 'present_e3_structured_blocks';
+            out.allowedIntent = 'present_institution_then_course_then_support_then_interest_question';
+            out.conversationalBehavior = 'send_three_presentation_blocks_then_interest_question';
+            out.pendingCriterionBefore = 'presentation';
+            out.pendingCriterionAfter = 'interest_signal';
+            out.speakableFacts = {
+              ...(out.speakableFacts || {}),
+              ...recoveryPresentation.facts,
+              authorized_facts: authorizedFactsForStage,
+              authorized_claim_keys: authorizedFactsForStage.map((fact: any) => fact.claim_key).filter(Boolean),
+            };
+            out.institutionalClaimsPending = recoveryPresentation.pendingClaims;
+            e3Validation = recoveryValidation;
+          }
+        }
         if (e3Validation.valid) {
           out.atomicMessages = e3AtomicMessages;
+          out.sendInstitutionImage = true;
           await input.supabase
             .from('leads')
             .update({
@@ -2885,7 +2921,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
                 ...currentSalesContext,
                 e3_presentation_complete: true,
                 e3_presentation_completed_at: new Date().toISOString(),
-                e3_presentation_blocks_sent: ['institution', 'course', 'study_experience', 'closing_question'],
+                e3_presentation_blocks_sent: ['institution_image', 'course', 'study_experience', 'closing_question'],
                 e3_institutional_claims_pending: authorizedFactsForStage.map((fact: any) => fact.claim_key).filter(Boolean),
                 e3_interest_signal_captured: false,
                 pending_criterion: 'interest_signal',
@@ -3025,6 +3061,75 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     });
 
     if (out.handoff) break;
+  }
+
+  if (
+    input.etapaAtual === 'E3'
+    && String(out.processAction || '') === 'present_e3_structured_blocks'
+    && !String(out.text || '').trim()
+  ) {
+    if (
+      !currentSalesContext.duration_semesters
+      || !currentSalesContext.modalidade_oferta && !currentSalesContext.delivery_mode
+      || typeof currentSalesContext.has_internship !== 'boolean'
+    ) {
+      const lookupResult = await forceCourseLookup({
+        ctx,
+        messages,
+        out,
+        query: currentCourseInterest || String(currentSalesContext.course_display_name || '').trim(),
+      }) as Record<string, unknown>;
+      const courseFact = Array.isArray(lookupResult?.items) ? (lookupResult.items[0] as Record<string, unknown> | undefined) : undefined;
+      const durationText = String(courseFact?.duracao || '').trim();
+      const semesters = Number(durationText.match(/(\d+)\s*semestres?/i)?.[1] || 0);
+      const years = durationText.match(/(\d+(?:[.,]\d+)?)\s*anos?/i)?.[1]?.replace(',', '.') || '';
+      Object.assign(currentSalesContext, {
+        duration_semesters: semesters || currentSalesContext.duration_semesters || null,
+        duration_years_text: years ? `${years} anos` : currentSalesContext.duration_years_text || null,
+        modalidade_oferta: String(courseFact?.modalidade || '').trim() || currentSalesContext.modalidade_oferta || null,
+        has_internship: typeof courseFact?.has_internship === 'boolean'
+          ? courseFact.has_internship
+          : currentSalesContext.has_internship,
+      });
+    }
+    const recoveryPresentation = buildE3PresentationMessages({
+      leadSnapshot: {
+        ...(input.leadSnapshot || {}),
+        curso_interesse: currentCourseInterest || input.leadSnapshot?.curso_interesse || null,
+        modalidade: currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || null,
+        sales_context: currentSalesContext,
+      },
+      authorizedFacts: authorizedFactsForStage,
+    });
+    const recoveryBlocks = recoveryPresentation.messages.map((part) => normalizeMessageText(part, true)).filter(Boolean);
+    const recoveryValidation = validateE3PresentationBlocks({
+      blocks: recoveryBlocks,
+      courseName: String(currentCourseInterest || currentSalesContext.course_display_name || ''),
+      modality: String(currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || ''),
+      motivation: String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || ''),
+      hasInternship: typeof currentSalesContext.has_internship === 'boolean' ? currentSalesContext.has_internship : null,
+      authorizedClaimKeys: authorizedFactsForStage.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean),
+    });
+    if (recoveryValidation.valid) {
+      out.text = recoveryBlocks.join('\n---\n');
+      out.atomicMessages = recoveryBlocks;
+      out.outputBeforeGovernance = out.text;
+      out.fallbackUsed = true;
+      out.fallbackReason = 'empty_e3_presentation_recovered';
+      out.deterministicReplyUsed = true;
+      out.responseOrigin = 'structural_contract_recovery';
+      out.pendingCriterionBefore = 'presentation';
+      out.pendingCriterionAfter = 'interest_signal';
+      out.speakableFacts = {
+        ...(out.speakableFacts || {}),
+        ...recoveryPresentation.facts,
+        authorized_facts: authorizedFactsForStage,
+        authorized_claim_keys: authorizedFactsForStage.map((fact: any) => fact.claim_key).filter(Boolean),
+      };
+      out.institutionalClaimsPending = recoveryPresentation.pendingClaims;
+      out.stageContractViolation = false;
+      out.forbiddenTopicsDetected = [];
+    }
   }
 
   updateLlmTrace({

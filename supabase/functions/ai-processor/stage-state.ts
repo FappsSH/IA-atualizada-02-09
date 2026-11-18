@@ -149,6 +149,8 @@ function looksLikeResolvedMotivationReply(message: string) {
     'cresci vendo',
     'trabalha nisso',
     'trabalhar nisso',
+    'ja trabalhei',
+    'trabalhei na area',
     'area',
     'área',
     'profissao',
@@ -221,7 +223,7 @@ function looksLikePositiveMotivationWorkReply(message: string) {
   const normalized = normalize(message);
   if (!normalized) return false;
 
-  return /^(sim[,.! ]+)?(eu )?(ja )?(trabalho|atuo)\b/.test(normalized)
+  return /^(sim[,.! ]+)?(eu )?(ja )?(trabalho|trabalhei|atuo)\b/.test(normalized)
     || /^(sim[,.! ]+)?sou\s+\S.{1,}$/.test(normalized);
 }
 function looksLikePartialMotivationWorkReply(message: string) {

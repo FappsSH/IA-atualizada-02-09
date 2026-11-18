@@ -9,9 +9,18 @@ import { loadTenantRuntimeConfig, resolveEdgeReachableUrl } from '../_shared/run
 import { applyMessageGovernance, splitTextForMessagePolicy } from '../_shared/message-governance.ts';
 import { logLeadRuntimeEvent } from '../ai-processor/intelligence.ts';
 import type { MessagePolicy } from '../_shared/message-governance.ts';
+import { institutionImageBase64 } from './institution-image-data.ts';
 
 const TENANT_ID = Deno.env.get('TENANT_ID') ?? '00000000-0000-0000-0000-000000000001';
 const INTER_MESSAGE_DELAY_MS = 1500;
+let institutionImageBase64Promise: Promise<string> | null = null;
+
+async function getInstitutionImageBase64() {
+  if (!institutionImageBase64Promise) {
+    institutionImageBase64Promise = Promise.resolve(institutionImageBase64);
+  }
+  return institutionImageBase64Promise;
+}
 
 interface EvolutionSendResult {
   ok: boolean;
@@ -54,6 +63,43 @@ async function evolutionSendText(
   return { ok: true, status: res.status, messageId: data?.key?.id };
 }
 
+async function evolutionSendInstitutionImage(
+  baseUrl: string,
+  instanceName: string,
+  apiKey: string,
+  telefone: string,
+): Promise<EvolutionSendResult> {
+  const number = telefone.replace(/^\+/, '').replace(/@.*/, '');
+  const url = `${baseUrl}/message/sendMedia/${instanceName}`;
+  const media = await getInstitutionImageBase64();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: apiKey,
+    },
+    body: JSON.stringify({
+      number,
+      mediatype: 'image',
+      mimetype: 'image/jpeg',
+      media,
+      fileName: 'informacao-instituicao.jpeg',
+      caption: '',
+      options: {
+        delay: 1200,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    return { ok: false, status: res.status, error: errBody };
+  }
+
+  const data = await res.json().catch(() => ({}));
+  return { ok: true, status: res.status, messageId: data?.key?.id };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -73,12 +119,12 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { lead_id, text, skip_governance, subagente_usado, iteracoes, tool_calls } = body ?? {};
+    const { lead_id, text, skip_governance, subagente_usado, iteracoes, tool_calls, send_institution_image } = body ?? {};
     const persistMessage = body?.persist_message !== false;
     const skipTakeover = body?.skip_takeover === true;
     let { telefone } = body ?? {};
 
-    if (!text) {
+    if (!text && send_institution_image !== true) {
       return new Response(
         JSON.stringify({ ok: false, error: 'campo "text" obrigatorio' }),
         { status: 400 },
@@ -166,6 +212,40 @@ serve(async (req) => {
     const sentOutputParts: string[] = [];
     let lastMessageId: string | undefined;
 
+    if (send_institution_image === true) {
+      const imageResult = await evolutionSendInstitutionImage(
+        evolutionBaseUrl,
+        evolutionInstance,
+        evolutionApiKey,
+        telefone,
+      );
+      resultados.push(imageResult);
+      if (imageResult.messageId) lastMessageId = imageResult.messageId;
+      if (imageResult.ok && resolvedLeadId && persistMessage) {
+        await supabase.from('mensagens').insert({
+          tenant_id: tenantId,
+          lead_id: resolvedLeadId,
+          role: 'assistant',
+          conteudo: '[imagem_instituicao]',
+          etapa_no_momento: etapaAtual,
+          subagente_usado: subagente_usado ?? null,
+          iteracoes: iteracoes ?? null,
+          tool_calls: tool_calls ?? null,
+          whatsapp_message_id: imageResult.messageId ?? null,
+          created_at: new Date().toISOString(),
+        });
+      }
+      if (!imageResult.ok) {
+        return new Response(JSON.stringify({
+          ok: false,
+          mensagens_enviadas: 0,
+          total_partes: partes.length,
+          institution_media_sent: false,
+          first_error: imageResult.error ?? 'falha_no_envio_da_imagem',
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
     for (let i = 0; i < partes.length; i += 1) {
       const parte = partes[i];
 
@@ -225,6 +305,7 @@ serve(async (req) => {
           iteracoes: iteracoes ?? null,
           mensagens_enviadas: resultados.filter((result) => result.ok).length,
           total_partes: partes.length,
+          institution_media_sent: send_institution_image === true && resultados[0]?.ok === true,
           first_error: firstError,
           validated_output: String(text || ''),
           governed_output_parts: partes,
@@ -242,6 +323,7 @@ serve(async (req) => {
         ok: resultados.length > 0 && resultados.every((result) => result.ok),
         mensagens_enviadas: resultados.filter((result) => result.ok).length,
         total_partes: partes.length,
+        institution_media_sent: send_institution_image === true && resultados[0]?.ok === true,
         messageId: lastMessageId,
         first_error: firstError,
         governed_text: governedText,

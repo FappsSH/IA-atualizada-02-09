@@ -3,6 +3,7 @@ import {
   COURSE_CATALOG_ENTRIES,
   COURSE_CATALOG_SOURCES,
   COURSE_CATALOG_TENANT_ID,
+  courseHasInternship,
   type CourseCatalogEntrySeed,
 } from './course-catalog-dataset.ts';
 
@@ -157,6 +158,7 @@ async function replaceEntries(sourceIds: Map<string, string>) {
     duration_semesters: entry.duration_semesters,
     duration_years: entry.duration_years,
     duration_text: entry.duration_text,
+    has_internship: courseHasInternship(entry),
     variant_kind: entry.variant_kind || 'standard',
     active: true,
     updated_at: new Date().toISOString(),

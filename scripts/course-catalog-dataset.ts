@@ -20,8 +20,20 @@ export interface CourseCatalogEntrySeed {
   duration_semesters: number;
   duration_years: number;
   duration_text: string;
+  has_internship?: boolean;
   variant_kind?: 'standard' | 'egresso' | 'area_basica' | 'custom';
   aliases?: string[];
+}
+
+export function courseHasInternship(entry: Pick<CourseCatalogEntrySeed, 'degree_level' | 'area_slug' | 'area_name'>) {
+  const area = `${entry.area_slug || ''} ${entry.area_name || ''}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return entry.has_internship === true
+    || entry.degree_level === 'licenciatura'
+    || (entry.degree_level === 'bacharelado' && area.includes('saude'));
 }
 
 export const COURSE_CATALOG_SOURCES: CourseCatalogSourceSeed[] = [

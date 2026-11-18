@@ -294,6 +294,7 @@ describe('quatro regressões E1 do teste manual', () => {
     'apareceu uma oportunidade pra mim',
     'recebi uma proposta',
     'quero mudar de area',
+    'Já trabalhei na área',
     'quero fazer para concurso',
     'Cara, eu sempre sonhei em fazer porque minha família toda é da área',
   ])('C: resolve motivation por motivo suficiente: %s', (message) => {

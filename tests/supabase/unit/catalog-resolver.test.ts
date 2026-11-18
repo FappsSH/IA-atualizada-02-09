@@ -32,6 +32,15 @@ describe('catalog resolver', () => {
         expect(result).toBeNull();
     });
 
+    it('reconhece "ja trabalhei na area" como resposta de motivacao', () => {
+        const result = detectContextualReplyKind(
+            'Já trabalhei na área',
+            [{ role: 'assistant', content: 'Você já trabalha nessa área ou essa graduação representa um sonho ou objetivo pessoal?' }],
+        );
+
+        expect(result).toBe('motivation');
+    });
+
     it('nao trata Licenciatura como nova consulta de catalogo quando ultima pergunta foi de linha', () => {
         const result = detectCatalogIntentWithHistory(
             'Licenciatura',
