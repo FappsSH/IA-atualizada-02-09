@@ -1,6 +1,7 @@
 // webhook-receiver — recebe eventos da Evolution API (WhatsApp self-hosted).
 // deno-lint-ignore-file
 // @ts-nocheck
+import { getInboundSkipReason } from '../_shared/inbound-filter.ts';
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { sendMessage } from '../_shared/pgmq.ts';
@@ -486,7 +487,11 @@ serve(async (req) => {
     const enqueued: string[] = [];
 
     for (const m of messages) {
-        if (m.key?.fromMe) continue;
+        const skipReason = getInboundSkipReason(m.key);
+        if (skipReason) {
+            if (skipReason !== 'from_me') console.log('[webhook-receiver] ignorado:', skipReason);
+            continue;
+        }
 
         // ── Extrair texto ou transcrever áudio ──────────────────────────────
         let text = m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? null;

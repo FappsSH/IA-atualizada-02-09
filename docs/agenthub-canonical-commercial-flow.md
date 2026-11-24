@@ -1594,3 +1594,77 @@ Se CANONICAL FLOW LOCAL = PASS:
 PARE.
 
 NÃO faça deploy remoto.
+==================================================
+ADENDO OFICIAL — DECISÕES DO ADMINISTRADOR (24/11/2026)
+==================================================
+
+Este adendo prevalece sobre qualquer trecho anterior deste documento,
+do relatório de handoff ou dos prompts que conflite com ele.
+
+E3 — APRESENTAÇÃO (substitui "E3 — EXATAMENTE 3 MENSAGENS")
+
+Ordem de entrega:
+
+1. imagem fixa da instituição (enviada pelo runtime; ela cobre
+   Universidade, 60+ anos, nota máxima no MEC, diploma reconhecido
+   no Brasil e no exterior, tutoria e flexibilidade);
+2. mensagem de texto 1 — o curso: nome oficial, duração em semestres
+   e em anos, modalidade real e estágio;
+3. mensagem de texto 2 — linkagem obrigatória do curso com o objetivo
+   que a pessoa contou na E1 (motivação), de forma humana e específica
+   ao caso dela, sem citar a frase dela literalmente e sem prometer
+   emprego, salário ou aprovação;
+4. mensagem de texto 3 — pergunta final.
+
+Regra de estágio:
+- todas as licenciaturas têm estágio;
+- todos os bacharelados da área de saúde têm estágio;
+- demais cursos não têm estágio, salvo dado explícito no catálogo;
+- com estágio: dizer que ele pode ser realizado na cidade da pessoa
+  caso ela não tenha condições de se deslocar ao polo;
+- sem estágio: apresentar como vantagem (não precisa se preocupar
+  com deslocamento para essa etapa).
+
+Pergunta final (objetivo: a pessoa dizer quais pontos mais gostou e
+quais mais fizeram sentido para ela de fato):
+
+Com nome:
+De todos esses pontos que eu te apresentei [NOME], quais foram os que você mais gostou e que mais fizeram sentido pra você?
+
+Sem nome:
+De todos esses pontos que eu te apresentei, quais foram os que você mais gostou e que mais fizeram sentido pra você?
+
+Resposta à pergunta final:
+- se a pessoa disser o que mais gostou: reação curta e conectada ao
+  ponto citado e seguir para E4 (nome completo);
+- se fizer uma pergunta: responder só o ponto perguntado com fatos
+  autorizados, sem reapresentar, e não avançar só porque perguntou;
+- interesse em preço ou valores: seguir para E4.
+
+E6 — INDICAÇÃO
+
+Vale o convite direto deste documento ("Antes de encerrarmos, quero
+te fazer um último convite..."). Não há pergunta prévia de satisfação.
+Recusa: "Tranquilo!!" e E7.
+
+E1 — NOME
+
+A AgentHub não pede o nome do lead. Sem primeiro nome confiável,
+segue sem vocativo.
+
+ATENDIMENTO SOMENTE DE LEADS
+
+A AgentHub só atende quem é lead de verdade. Ela fica em silêncio e
+não cria lead para:
+- mensagens de grupos, status, listas de transmissão e canais;
+- o número do administrador (tratado como comando de admin);
+- contatos que já conversavam com o número antes da AgentHub
+  (equipe, alunos já matriculados, amigos): quem já tem conversa
+  anterior no WhatsApp ou está salvo na agenda;
+- números na lista de "não atender" (lead_ignore_list).
+
+Comandos do administrador pelo WhatsApp:
+- ignorar 55DDDNUMERO — passa a não atender esse número;
+- atender 55DDDNUMERO — volta a atender esse número.
+
+Leads que já estão no funil da AgentHub continuam sendo atendidos.
