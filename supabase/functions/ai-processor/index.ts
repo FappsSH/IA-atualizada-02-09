@@ -3645,6 +3645,13 @@ serve(async (req) => {
                         stageOutput.text = !congratulatedBefore && /meus parab[eé]ns/i.test(generated) && /boleto/i.test(generated) && /segunda/i.test(generated)
                             ? generated
                             : buildE5BoletoQuestionFallback(congratulatedBefore);
+                    } else {
+                        // Pergunta do boleto já veio; garante os parabéns canônicos na primeira vez.
+                        const congratulatedBefore = /meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
+                        const generated = String(stageOutput.text || '');
+                        if (!congratulatedBefore && !/meus parab[eé]ns/i.test(generated)) {
+                            stageOutput.text = buildE5BoletoQuestionFallback(false);
+                        }
                     }
                 }
 
@@ -4229,7 +4236,7 @@ serve(async (req) => {
                     Object.assign(leadSnapshot, handoffLeadSnapshot);
                     continue;
                 }
-                if (nextStage === 'E3' || nextStage === 'E4') {
+                if (nextStage === 'E3' || nextStage === 'E4' || nextStage === 'E6' || nextStage === 'E7') {
                     continue;
                 }
                 break;
@@ -4240,6 +4247,10 @@ serve(async (req) => {
                     const uniqueStages = Array.from(new Set(collectedTexts.map((item) => item.stage)));
                     if (uniqueStages.length === 2 && uniqueStages[0] === 'E1' && uniqueStages[1] === 'E2') {
                         return collectedTexts.map((item) => item.text).filter(Boolean).join('\n\n');
+                    }
+                    if (uniqueStages.length > 1 && uniqueStages.some((stage) => ['E5', 'E6', 'E7'].includes(String(stage)))) {
+                        // Pós-venda: confirmação da etapa anterior + fala da próxima, em mensagens separadas.
+                        return collectedTexts.map((item) => String(item.text || '').trim()).filter(Boolean).join('\n---\n');
                     }
                     if (uniqueStages.length > 1) {
                         return collectedTexts.slice(-1)[0]?.text || '';

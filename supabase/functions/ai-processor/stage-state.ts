@@ -661,10 +661,10 @@ export function detectLastAgentQuestionType(params: {
 
   if (includesAny(normalized, ['qual cidade', 'de qual cidade', 'em que cidade'])) return 'city';
   if (includesAny(normalized, ['ja trabalha na area', 'sonho ou objetivo pessoal', 'esse curso representa um sonho'])) return 'motivation';
-  if (includesAny(normalized, ['bacharelado ou licenciatura', 'qual linha'])) return 'course_line';
-  if (includesAny(normalized, ['qual area mais se identifica', 'qual área mais se identifica', 'qual area faz mais sentido'])) return 'catalog_area_selection';
+  if (includesAny(normalized, ['bacharelado ou licenciatura', 'qual linha', 'qual delas voce quer seguir', 'qual delas você quer seguir'])) return 'course_line';
+  if (includesAny(normalized, ['qual area mais se identifica', 'qual área mais se identifica', 'qual area faz mais sentido', 'area voce mais se identifica', 'área você mais se identifica', 'qual area voce', 'qual área você'])) return 'catalog_area_selection';
   if (includesAny(normalized, ['qual desses cursos', 'qual dessas opcoes', 'qual opcao interessou mais'])) return 'alternative_course_selection';
-  if (includesAny(normalized, ['qual curso voce gostou mais', 'qual curso você gostou mais', 'qual curso mais te interessou'])) return 'course_selection';
+  if (includesAny(normalized, ['qual curso voce gostou mais', 'qual curso você gostou mais', 'qual curso mais te interessou', 'qual desses mais combina'])) return 'course_selection';
   if (includesAny(normalized, ['viagem', 'mudanca'])) return 'vaccine_availability';
   if (includesAny(normalized, ['decide sozinho', 'conversa com alguem'])) return 'vaccine_decider';
   if (includesAny(normalized, ['combinado', 'bolsa ficar boa', 'seguimos para inscricao'])) return 'vaccine_agreement';

@@ -454,8 +454,10 @@ export function detectPersonalityOutputViolations(params: {
   violations.push(...earlyStageCourseLineLeakViolations);
 
   const e3Motivation = normalizeText(String(params.leadMotivation || ''));
-  const e3FirstBlock = String(params.text || '').split(/\n\s*---\s*\n/)[0] || '';
-  const e3OpeningWords = normalizeText(e3FirstBlock);
+  // Ordem decidida em 24/11: a ligação com o objetivo vem na mensagem 2 (qualquer bloco antes da pergunta final vale).
+  const e3Blocks = String(params.text || '').split(/\n\s*---\s*\n|\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  const e3BodyBlocks = e3Blocks.length > 1 && /\?\s*$/.test(e3Blocks[e3Blocks.length - 1]) ? e3Blocks.slice(0, -1) : e3Blocks;
+  const e3OpeningWords = normalizeText(e3BodyBlocks.join(' '));
   const e3MotivationTokens = e3Motivation.split(' ').filter((word) => word.length >= 5 && !['sempre', 'mesmo', 'pessoal', 'porque', 'quero', 'queria', 'fazer', 'curso', 'area', 'graduacao', 'sonho', 'objetivo'].includes(word));
   const e3WorkMotivation = /trabalh|atuar|profiss/.test(e3Motivation);
   const e3OpeningConnectsMotivation = e3WorkMotivation

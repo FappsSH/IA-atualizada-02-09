@@ -2466,12 +2466,19 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       structuralCorrections.push('- Se o lead disse que nao tem viagem/mudanca, nao valide essa resposta; va direto para a pergunta de decisor.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('missing_travel_move_contextual_reaction'))) {
-      structuralCorrections.push('- A pessoa informou viagem/mudanca real: escreva primeiro uma reacao curta, humana e util ao contexto dela; depois, em novo paragrafo, faca somente a pergunta de decisor.');
-      structuralCorrections.push('- Nao use frase fixa, nao invente garantia e nao omita a reacao antes da pergunta.');
+      structuralCorrections.push('- A pessoa informou viagem/mudanca real: comece com "Perfeito!!" e explique pela modalidade real do curso (EAD ou Semipresencial) como no prompt da E2; depois, em novo paragrafo, faca somente a pergunta do decisor.');
+      structuralCorrections.push('- Nao comece com "Entendi" e nao invente garantia.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('e3_missing_personalized_motivation_opening'))) {
-      structuralCorrections.push('- A segunda mensagem precisa conectar explicitamente o curso ao motivo concreto do lead, com as referencias centrais do motivo.');
-      structuralCorrections.push('- Reescreva em tom de conversa entusiasta e elimine repeticao de diferencial institucional entre blocos.');
+      const leadMotivationText = String(
+        input.regenerationContext.speakableFacts?.lead_motivation
+        || (input.leadSnapshot?.sales_context as any)?.motivacao_principal
+        || input.leadSnapshot?.dor_principal
+        || '',
+      ).trim();
+      structuralCorrections.push(`- Motivo que a pessoa contou na E1: "${leadMotivationText || 'nao informado'}".`);
+      structuralCorrections.push('- Reescreva as 3 mensagens separadas por uma linha com ---: (1) curso, duracao, modalidade e estagio; (2) ligacao do curso com ESSE motivo, usando as palavras centrais dele (ex.: familia, sonho, ja trabalha); (3) a pergunta final.');
+      structuralCorrections.push('- Sem a ligacao com o motivo na segunda mensagem a resposta sera rejeitada.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('duplicate_meaningful_reaction'))) {
       structuralCorrections.push('- Remova reacao duplicada ao mesmo motivo; E1 reage uma vez e E2 pergunta apenas o criterio atual.');
