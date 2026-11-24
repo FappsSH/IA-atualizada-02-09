@@ -91,3 +91,21 @@ describe('E3 nao repete a imagem da instituicao', () => {
     expect(r.personality_violations).toContain('e3_repeats_institution_image');
   });
 });
+
+describe('E3 x motivacao familiar e retomada da proposta', () => {
+  it('nao confunde "tradicao da familia" com repetir a imagem', () => {
+    const r = detectPersonalityOutputViolations({
+      stage: 'E3', processAction: 'present_e3_structured_blocks', courseStatus: 'confirmed_available',
+      leadMotivation: 'minha familia toda fez',
+      text: 'Farmacia tem 8 semestres.\n---\nSeguir a tradição da sua família nessa área é um caminho lindo.\n---\nDe todos esses pontos, quais você mais gostou e fizeram sentido pra você?',
+    } as any);
+    expect(r.personality_violations).not.toContain('e3_repeats_institution_image');
+  });
+  it('retomada da proposta sem ligar ao objetivo e rejeitada', () => {
+    const r = detectPersonalityOutputViolations({
+      stage: 'E4', processAction: 'open_post_proposal_negotiation', leadMotivation: 'minha familia toda fez, quero fazer tambem',
+      text: 'A proposta já está com você para conferir.\n\nConsegue me dar um retorno até o fim do dia?',
+    } as any);
+    expect(r.personality_violations).toContain('post_proposal_missing_motivation_link');
+  });
+});

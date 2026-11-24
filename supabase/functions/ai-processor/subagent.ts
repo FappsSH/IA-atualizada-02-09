@@ -2481,6 +2481,15 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       structuralCorrections.push('- Reescreva as 3 mensagens separadas por uma linha com ---: (1) curso, duracao, modalidade e estagio; (2) ligacao do curso com ESSE motivo, usando as palavras centrais dele (ex.: familia, sonho, ja trabalha); (3) a pergunta final.');
       structuralCorrections.push('- Sem a ligacao com o motivo na segunda mensagem a resposta sera rejeitada.');
     }
+    if (forbiddenTopics.some((topic) => String(topic).includes('post_proposal_missing_motivation_link'))) {
+      const leadMotivationText = String(
+        (input.leadSnapshot?.sales_context as any)?.motivacao_principal
+        || input.leadSnapshot?.dor_principal
+        || '',
+      ).trim();
+      structuralCorrections.push(`- Motivo que a pessoa contou na E1: "${leadMotivationText || 'nao informado'}".`);
+      structuralCorrections.push('- No primeiro paragrafo, diga que a proposta ja esta com ela e ligue a proposta a ESSE motivo, usando as palavras centrais dele (ex.: familia, sonho, ja trabalha). No segundo, mencione quem decide junto (se houver) e pergunte se ela consegue dar um retorno ate o fim do dia.');
+    }
     if (forbiddenTopics.some((topic) => String(topic).includes('duplicate_meaningful_reaction'))) {
       structuralCorrections.push('- Remova reacao duplicada ao mesmo motivo; E1 reage uma vez e E2 pergunta apenas o criterio atual.');
     }

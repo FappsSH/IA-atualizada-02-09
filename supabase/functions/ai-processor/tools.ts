@@ -6,6 +6,7 @@ import { detectContextualReplyKind } from './catalog-resolver.ts';
 import { queryKnowledgeBase } from './knowledge.ts';
 import { getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
+import { canonicalLeadPhone } from '../_shared/lead-gate.ts';
 
 export interface ToolContext {
     supabase: any;
@@ -1259,6 +1260,19 @@ export async function tool_registrar_indicacao(
     ctx: ToolContext,
     args: { telefone_indicado: string; nome_indicado?: string },
 ) {
+    // Uma indicação por telefone (em qualquer formato) para o mesmo lead de origem.
+    const canonical = canonicalLeadPhone(args.telefone_indicado);
+    if (canonical) {
+        const { data: existing } = await ctx.supabase
+            .from('indicacoes')
+            .select('id, telefone_indicado')
+            .eq('tenant_id', ctx.tenantId)
+            .eq('lead_origem_id', ctx.leadId);
+        const duplicate = (existing || []).find((row: any) => canonicalLeadPhone(row?.telefone_indicado) === canonical);
+        if (duplicate) {
+            return { ok: true, telefone: args.telefone_indicado, already_registered: true };
+        }
+    }
     const { error } = await ctx.supabase
         .from('indicacoes')
         .insert({
@@ -1810,6 +1824,7 @@ export async function tool_notificar_admin(
             body: JSON.stringify({
                 lead_id: ctx.leadId,
                 telefone: telefoneAdmin,
+                tenant_id: ctx.tenantId,
                 text: texto,
                 skip_governance: true,
             }),

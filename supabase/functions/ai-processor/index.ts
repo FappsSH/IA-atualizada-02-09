@@ -2732,6 +2732,7 @@ serve(async (req) => {
                 },
                 body: JSON.stringify({
                     telefone: adminPhone,
+                    tenant_id: payload.tenant_id,
                     text: detalhes,
                     skip_governance: true,
                     persist_message: false,

@@ -472,6 +472,16 @@ export function detectPersonalityOutputViolations(params: {
     violations.push('e3_missing_personalized_motivation_opening');
   }
 
+  // E4 retomada: a proposta precisa ser ligada ao objetivo que a pessoa contou.
+  if (
+    params.stage === 'E4'
+    && String(params.processAction || '').trim() === 'open_post_proposal_negotiation'
+    && e3Motivation
+    && !e3OpeningConnectsMotivation
+  ) {
+    violations.push('post_proposal_missing_motivation_link');
+  }
+
   const e3AuthorizedClaimKeys = new Set((params.e3AuthorizedClaimKeys || []).map((key) => String(key || '').trim()));
   const e3DeniedClaimPatterns = String(params.stage || '') === 'E3'
     ? E3_CLAIM_GUARD_PATTERNS
@@ -529,7 +539,7 @@ export function detectPersonalityOutputViolations(params: {
   if (
     params.stage === 'E3'
     && String(params.processAction || '').trim() === 'present_e3_structured_blocks'
-    && /(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|sessenta anos|tradicao|blackboard|plataforma de ensino|tutor|tutoria|abrir muitas portas|se destacar)/.test(normalized)
+    && /(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|sessenta anos|anos de (historia|tradicao)|tradicao de mais|blackboard|plataforma de ensino|tutor|tutoria|abrir muitas portas|se destacar)/.test(normalized)
   ) {
     violations.push('e3_repeats_institution_image');
   }
