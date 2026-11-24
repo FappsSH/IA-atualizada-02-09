@@ -1823,6 +1823,14 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       },
     };
   }
+  if (input.etapaAtual === 'E2' && stageState.classificationReason === 'conditional_price_pending_confirmation') {
+    stabilizedStageContract = {
+      ...stageContract,
+      processAction: 'confirm_course_presentation_before_price',
+      conversationalBehavior: 'confirm_course_presentation_before_price',
+      allowedIntent: 'confirm_course_presentation_before_price',
+    };
+  }
   out.pendingCriterionBefore = pendingCriterionBefore || null;
   out.pendingCriterionAfter = pendingCriterionAfter || null;
   out.allowedIntent = stabilizedStageContract.allowedIntent;
@@ -2173,10 +2181,21 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
           'DECISOR COM TERCEIRO ENVOLVIDO',
           `- Pessoa citada na decisao: ${participant}.`,
           '- Antes do combinado, reconheca de forma curta, natural e contextual que essa pessoa participa da decisao. Nao elogie, nao repita a pergunta e nao invente uma resposta fixa.',
-          '- No mesmo turno, faca o combinado comercial completo: se a apresentacao fizer sentido e a bolsa ficar boa, seguimos para inscricao.',
+          '- No mesmo turno, faca o combinado comercial completo exatamente como no prompt da E2 (nao encaixar no bolso / continuamos amigos / encaixar no bolso / inscricao / Combinado?).',
         ].join('\n'),
       });
     }
+  }
+  if (input.etapaAtual === 'E2' && String(out.processAction || '') === 'confirm_course_presentation_before_price') {
+    messages.push({
+      role: 'system',
+      content: [
+        'RESPOSTA AO "DEPENDE DO VALOR" (spec E2)',
+        '- O combinado ja foi feito. NAO repita o combinado.',
+        '- Responda exatamente com esta fala e espere a confirmacao:',
+        '"Perfeito!! E eu vou te passar os valores sim.\n\nAntes disso, quero te apresentar como funciona o curso e a metodologia, porque assim você entende exatamente o que vai receber e também consegue tirar qualquer dúvida comigo.\n\nTudo bem assim?"',
+      ].join('\n'),
+    });
   }
   if (broadCatalogRequest) {
     out.pendingCriterionBefore = pendingCriterionBefore || 'course';
@@ -2315,24 +2334,24 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ] : []),
       ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_decider' ? [
         '- RESPONSABILIDADE ATUAL: ask_decision_participant.',
-        '- Modelo de estrutura: "E sobre a decisao de iniciar esse objetivo, voce decide sozinho/sozinha/por conta propria ou costuma conversar com alguem antes?"',
-        '- Use "sozinha" se houver seguranca de genero feminino, "sozinho" se houver seguranca de genero masculino, e "por conta propria" quando nao houver seguranca.',
+        '- Fala de referencia (spec): "E na hora de tomar essa decisão, você costuma decidir sozinho ou tem alguém que participa com você?"',
+        '- Use "sozinha" se houver seguranca de genero feminino; caso contrario mantenha a fala de referencia.',
         '- A PERSONALITY pode adaptar levemente o tom, mas deve manter a mesma intencao e fazer uma unica pergunta sobre quem participa da decisao.',
         '- Quando nao houver viagem/mudanca real, va direto para a pergunta de decisor, sem validar ou celebrar dado operacional.',
         '- Nao fale a palavra matricula.',
       ] : []),
       ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_decider' && String(currentSalesContext.e2_availability_objection_kind || '') === 'travel_or_move' ? [
         '- A pessoa informou uma viagem ou mudanca real. Resposta dela: ' + String(currentSalesContext.e2_vaccine_availability_answer || 'nao detalhada') + '.',
-        '- Antes da pergunta sobre quem participa da decisao, escreva um primeiro paragrafo curto que reaja a esse contexto concreto de modo humano e util.',
-        '- Se modalidade confirmada ajudar a explicar a situacao, pode menciona-la com precisao. Nao invente impacto, prazo, garantia ou solucao.',
-        '- Essa reacao deve ser personalizada pela PERSONALITY, nunca frase fixa, e precisa ficar em paragrafo separado da pergunta do decisor.',
+        `- Modalidade real do curso: ${String(currentSalesContext.modalidade_oferta || currentSalesContext.delivery_mode || input.leadSnapshot?.modalidade || 'nao confirmada')}.`,
+        '- Antes da pergunta do decisor, use a explicacao da modalidade exatamente como no prompt da E2 (EAD ou Semipresencial), comecando com "Perfeito!!".',
+        '- Nao comece com "Entendi", nao comente a mudanca em si e nao crie paragrafo extra antes da explicacao.',
       ] : []),
       ...(input.etapaAtual === 'E2' && String(out.processAction || stabilizedStageContract.processAction) === 'ask_vaccine_agreement' ? [
         '- RESPONSABILIDADE ATUAL: present_commercial_agreement.',
-        '- Modelo de estrutura: "[Nome], depois que eu apresentar pra voce sobre esse curso e voce sentir que nao faz sentido ou que nao encaixa no seu orcamento hoje, voce pode me dar um nao sincero e esta tudo bem. Mas se fizer sentido e a bolsa de estudos ficar boa, a gente ja segue para sua inscricao e garantimos essa oportunidade. Combinado?"',
-        '- Se o lead respondeu que conversa com esposa, marido, pai, mae, familia ou outra pessoa, DEVE reconhecer curto antes do combinado, no sentido: "Perfeito, conversa com ela/ele sim e se surgir alguma duvida especifica pode me enviar."',
+        '- Fala de referencia (spec), quase literal: "Se não fizer sentido e não encaixar no seu bolso o que vou te apresentar agora, você me dá um \"não ficou legal pra mim\" sincero e continuamos amigos, sem problemas.\n\nMas se fizer sentido pra você e encaixar no seu bolso, garantimos essa oportunidade indo para a inscrição. Combinado?"',
+        '- Se o lead respondeu que conversa com esposa, marido, pai, mae, familia ou outra pessoa, DEVE reconhecer curto antes do combinado, no sentido: "Que bacana!! E se ele/ela tiver qualquer dúvida, pode me mandar por aqui também. Vai ser um prazer responder."',
         '- Esse reconhecimento deve ser curto e natural; nao pode virar elogio, nao pode repetir a pergunta de decisor e nao pode substituir o combinado. Use ela para esposa/mae, ele para marido/pai, e pessoa/familia quando nao houver genero claro.',
-        '- A PERSONALITY pode adaptar levemente o tom, mas deve manter: apresentar o curso, possibilidade de nao fazer sentido/nao encaixar no orcamento, permissao para nao sincero, bolsa de estudos ficar boa, seguir para inscricao, garantir oportunidade e confirmar com "Combinado?".',
+        '- Mantenha obrigatoriamente: nao encaixar no bolso, "não ficou legal pra mim" sincero, continuamos amigos, encaixar no bolso, inscricao, garantir oportunidade e "Combinado?".',
         '- Se a decisao foi sozinho, nao valide nem elogie a independencia; comece diretamente pelo conteudo do combinado.',
         '- O combinado deve conter lado negativo, lado positivo e terminar em confirmacao.',
         '- Nao introduza, anuncie, peca permissao ou diga que vai fazer/apresentar o combinado.',
@@ -2340,14 +2359,13 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       ...(input.etapaAtual === 'E3' && String(out.processAction || stabilizedStageContract.processAction) === 'present_e3_structured_blocks' ? [
         '- RESPONSABILIDADE ATUAL: execute integralmente a estrutura editorial definida no prompt da dashboard; ele e a unica fonte editorial da E3.',
         '- O runtime enviara primeiro a imagem fixa da instituicao. Nao crie um bloco textual institucional.',
-        '- Entregue exatamente 3 mensagens de texto: apresentacao do curso; conexao do curso com o motivo real do lead e a informacao de estagio; pergunta final.',
+        '- Entregue exatamente 3 mensagens de texto: (1) o curso com duracao em semestres e anos, modalidade e estagio; (2) a ligacao do curso com o objetivo/motivo real do lead; (3) a pergunta final sobre quais pontos mais gostou e mais fizeram sentido.',
         '- Use uma linha contendo somente --- entre as 3 mensagens, totalizando 2 separadores.',
         '- FACTS e AUTHORIZED_FACTS apenas determinam o que e verdadeiro. A selecao, ordem, profundidade, tom e pergunta final pertencem exclusivamente ao prompt da dashboard.',
         '- PERSONALITY e obrigatoria na redacao: transforme fatos em conversa espontanea, entusiasta e proxima, conectada ao motivo real do lead.',
         `- MOTIVO CONFIRMADO DO LEAD: ${String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || 'nao informado')}.`,
         `- REFERENCIAS CENTRAIS DO MOTIVO: ${extractE3MotivationAnchors(String(currentSalesContext.motivacao_principal || input.leadSnapshot?.dor_principal || '')).join(', ') || 'nenhuma'}.`,
-        '- Quando houver motivo confirmado, abra o PRIMEIRO bloco conectando naturalmente um beneficio a esse motivo especifico. Faca isso em uma frase organica, sem repetir a fala do lead e sem frase generica pronta sobre objetivos.',
-        '- A apresentacao so esta completa se deixar claro, ja na abertura, que voce entendeu o motivo concreto desta pessoa.',
+        '- A SEGUNDA mensagem conecta o curso ao motivo especifico desta pessoa, usando as referencias centrais do motivo, sem repetir a fala dela entre aspas e sem frase generica.',
         '- Cada bloco precisa soar como Helton falando com esta pessoa, nunca como catalogo, ficha tecnica, texto institucional, lista de vantagens ou script lido.',
         '- Costure os fatos com transicoes naturais e valor pratico para o lead. Nao empilhe afirmacoes formais, abstratas ou genericas.',
         '- Selecione os diferenciais mais fortes para este lead e desenvolva valor pratico. Nao repita o mesmo diferencial, beneficio ou prova institucional em blocos diferentes.',
@@ -2447,7 +2465,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       structuralCorrections.push('- Nao use frase fixa, nao invente garantia e nao omita a reacao antes da pergunta.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('e3_missing_personalized_motivation_opening'))) {
-      structuralCorrections.push('- Abra o primeiro bloco conectando explicitamente um beneficio real ao motivo concreto do lead; nao deixe essa conexao para o fim nem use frase generica.');
+      structuralCorrections.push('- A segunda mensagem precisa conectar explicitamente o curso ao motivo concreto do lead, com as referencias centrais do motivo.');
       structuralCorrections.push('- Reescreva em tom de conversa entusiasta e elimine repeticao de diferencial institucional entre blocos.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('duplicate_meaningful_reaction'))) {
@@ -2460,7 +2478,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
       structuralCorrections.push('- O combinado comercial ja e a pergunta atual; remova pergunta de permissao para combinar, continuar ou apresentar.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('commercial_agreement_incomplete'))) {
-      structuralCorrections.push('- O combinado comercial precisa conter orcamento, nao sincero/tudo bem, bolsa de estudos ficar boa, inscricao, oportunidade e Combinado.');
+      structuralCorrections.push('- O combinado comercial precisa conter: nao encaixar no bolso, "não ficou legal pra mim" sincero e continuamos amigos, encaixar no bolso, inscricao, oportunidade e Combinado?.');
     }
     if (forbiddenTopics.some((topic) => String(topic).includes('medical_vaccine_confusion') || String(topic).includes('question_mismatch:ask_vaccine_availability'))) {
       structuralCorrections.push('- Remova linguagem medica ou de saude; a pergunta permitida e comercial, sobre disponibilidade por viagem/mudanca.');

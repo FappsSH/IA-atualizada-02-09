@@ -53,7 +53,7 @@ function sanitizeParagraph(paragraph: string) {
   // Remove a frase inteira (nunca corta no meio da frase).
   next = next
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !/estou aqui para (te )?ajudar|estou [àa] disposi[cç][aã]o/i.test(sentence))
+    .filter((sentence) => !/estou aqui|estou [àa] disposi[cç][aã]o|fico [àa] disposi[cç][aã]o|se precisar de mais alguma/i.test(sentence))
     .join(' ');
 
   next = next

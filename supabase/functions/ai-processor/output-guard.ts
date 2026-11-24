@@ -523,6 +523,11 @@ export function detectPersonalityOutputViolations(params: {
     violations.push('ungrounded_output:segment_unavailable_inferred_area');
   }
 
+  // Spec PERSONALITY: não validar automaticamente com "Entendi".
+  if (/^\s*entendi\b/.test(normalized)) {
+    violations.push('automatic_entendi');
+  }
+
   if (TECHNICAL_COURSE_NAME_PATTERNS.some((pattern) => pattern.test(String(params.text || '')))) {
     violations.push('technical_course_name_leak');
   }

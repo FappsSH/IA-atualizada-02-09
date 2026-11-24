@@ -21,7 +21,7 @@ describe('initial E1 welcome contract', () => {
     });
 
     expect(messages).toEqual([
-      'Opa, Muito bom dia!! Eu sou Helton, especialista em carreiras da Universidade Cruzeiro do Sul.\n\nÉ um prazer enorme falar com você!!',
+      'Opa, muito bom dia!! Eu sou Helton, especialista em carreiras da Universidade Cruzeiro do Sul.\n\nÉ um prazer enorme falar com você!!',
       'Primeiramente eu quero te parabenizar pela iniciativa em entrar em contato conosco.\n\nSão pessoas como você que fazemos questão de acompanhar!! Meus parabéns.',
       'No que posso te ajudar hoje?',
     ]);

@@ -38,7 +38,7 @@ export function buildInitialE1WelcomeMessages(params: {
   const nameChunk = firstName ? ` ${firstName}` : '';
 
   return [
-    `Opa, ${greeting}${nameChunk}!! Eu sou Helton, especialista em carreiras da Universidade Cruzeiro do Sul.\n\nÉ um prazer enorme falar com você!!`,
+    `Opa, ${greeting.charAt(0).toLowerCase()}${greeting.slice(1)}${nameChunk}!! Eu sou Helton, especialista em carreiras da Universidade Cruzeiro do Sul.\n\nÉ um prazer enorme falar com você!!`,
     'Primeiramente eu quero te parabenizar pela iniciativa em entrar em contato conosco.\n\nSão pessoas como você que fazemos questão de acompanhar!! Meus parabéns.',
     'No que posso te ajudar hoje?',
   ];

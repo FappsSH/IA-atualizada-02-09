@@ -152,7 +152,7 @@ serve(async (req) => {
 
     let resolvedLeadId = lead_id ?? null;
     let etapaAtual: string | null = null;
-    let tenantId = TENANT_ID;
+    let tenantId = (typeof body?.tenant_id === 'string' && body.tenant_id.trim()) ? body.tenant_id.trim() : TENANT_ID;
 
     if (!telefone && lead_id) {
       const { data: lead } = await supabase

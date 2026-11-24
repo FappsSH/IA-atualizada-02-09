@@ -104,7 +104,7 @@ function isE2AdvanceStructurallyValid(params: {
 }
 
 function buildE2AgreementFallback() {
-    return 'Entao deixa eu combinar uma coisa com voce.\n\nVou te apresentar tudo direitinho e, se fizer sentido pra voce e a bolsa de estudos ficar boa tambem, seguimos para a inscricao e garantimos essa oportunidade. Combinado?';
+    return 'Se não fizer sentido e não encaixar no seu bolso o que vou te apresentar agora, você me dá um "não ficou legal pra mim" sincero e continuamos amigos, sem problemas.\n\nMas se fizer sentido pra você e encaixar no seu bolso, garantimos essa oportunidade indo para a inscrição. Combinado?';
 }
 
 function userAskedFinancialQuestion(message: string) {
@@ -1072,7 +1072,30 @@ function splitValidatedE3Blocks(text: string | undefined) {
         .split(/\n\s*---\s*\n/)
         .map((part) => part.trim())
         .filter(Boolean);
-    return [3, 4].includes(blocks.length) ? blocks : [String(text || '').trim()].filter(Boolean);
+    if ([3, 4].includes(blocks.length)) return blocks;
+    return splitE3ByParagraphs(String(text || '').trim());
+}
+
+// Quando o modelo não usa ---, agrupa os parágrafos nas 3 mensagens da spec:
+// curso (+ duração/modalidade/estágio), ligação com o objetivo, pergunta final.
+function splitE3ByParagraphs(text: string) {
+    const paragraphs = text.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+    if (paragraphs.length < 3) return [text].filter(Boolean);
+    const last = paragraphs[paragraphs.length - 1];
+    if (!/\?\s*$/.test(last)) return [text].filter(Boolean);
+    const body = paragraphs.slice(0, -1);
+    let courseEnd = -1;
+    body.forEach((part, index) => {
+        if (/(semestre|modalidade|est[aá]gio|desloc)/i.test(part)) courseEnd = index;
+    });
+    if (courseEnd < 0) courseEnd = 0;
+    if (courseEnd >= body.length - 1) courseEnd = body.length - 2;
+    if (courseEnd < 0) return [text].filter(Boolean);
+    return [
+        body.slice(0, courseEnd + 1).join('\n\n'),
+        body.slice(courseEnd + 1).join('\n\n'),
+        last,
+    ];
 }
 
 function sanitizeBlockedE3AdvanceText(text: string | undefined) {
@@ -2718,6 +2741,7 @@ serve(async (req) => {
                 },
                 body: JSON.stringify({
                     telefone: adminPhone,
+                    tenant_id: payload.tenant_id,
                     text: params.adminText,
                     skip_governance: true,
                     persist_message: false,
@@ -3450,9 +3474,14 @@ serve(async (req) => {
                     if (!proposalCompleted) {
                         const fullNameCandidate = extractFullNameCandidate(activeLastUserMessage);
                         const lastKnownName = String(liveSalesContext.proposal_full_name || leadSnapshot?.nome || '').trim();
-                        const proposalName = looksLikeFullName(fullNameCandidate)
+                        // Spec E4: o nome completo é sempre pedido e confirmado pelo lead antes da proposta.
+                        const askedFullName = assistantAskedProposalNameQuestion(workingHistory || payload.history || []);
+                        const confirmsKnownName = askedFullName
+                            && looksLikeFullName(lastKnownName)
+                            && /^(sim|isso|correto|exato|pode ser|esse mesmo|e esse|é esse)\b/.test(normalizeText(activeLastUserMessage));
+                        const proposalName = askedFullName && looksLikeFullName(fullNameCandidate)
                             ? fullNameCandidate
-                            : looksLikeFullName(lastKnownName)
+                            : confirmsKnownName
                                 ? lastKnownName
                                 : '';
 
@@ -3651,9 +3680,11 @@ serve(async (req) => {
                                 no_indication: true,
                                 pending_indication_name: null,
                                 pending_criterion: null,
+                                e7_closing_sent: true,
                             });
                             leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.text = buildE6NoIndicationFallback();
+                            // Spec: recusa = "Tranquilo!!" e encerramento da E7 na mesma resposta.
+                            stageOutput.text = `${buildE6NoIndicationFallback()}\n---\n${buildE7NoIndicationClosingFallback()}`;
                             await stopE6('sem indicacao');
                         } else if (!String(e6Context.pending_indication_name || '').trim() && looksLikePersonNameReply(activeLastUserMessage)) {
                             console.warn('[ai-processor] capturando nome do indicado em E6');
@@ -3711,7 +3742,9 @@ serve(async (req) => {
 
                 if (currentSubagent === 'E7') {
                     const liveSalesContext = await readLeadSalesContext(supabase, payload.lead_id);
-                    if (liveSalesContext.referral_registered === true) {
+                    if (liveSalesContext.e7_closing_sent === true && hop > 0) {
+                        stageOutput.text = '';
+                    } else if (liveSalesContext.referral_registered === true) {
                         stageOutput.text = buildE7ClosingFallback(String(liveSalesContext.last_indicated_name || '').trim());
                     } else if (liveSalesContext.no_indication === true && hop > 0) {
                         stageOutput.text = buildE7NoIndicationClosingFallback();
@@ -3977,9 +4010,10 @@ serve(async (req) => {
                         stageOutput.conversationalBehavior = 'optional_short_contextual_acknowledgement';
                         stageOutput.pendingCriterionAfter = null;
                         const modelCompletionText = extractModelCompletionAcknowledgement(stageOutput.text || stageOutput.rawModelOutput || stageOutput.outputBeforeGovernance);
-                        stageOutput.text = modelCompletionText || buildE2CompletionFallback();
-                        stageOutput.deterministicReplyUsed = !modelCompletionText;
-                        stageOutput.responseOrigin = modelCompletionText ? (stageOutput.responseOrigin || 'llm_free_generation') : 'structural_fallback';
+                        // Spec: depois do combinado a apresentação começa direto; sem frase fixa de transição.
+                        stageOutput.text = modelCompletionText || '';
+                        stageOutput.deterministicReplyUsed = false;
+                        stageOutput.responseOrigin = modelCompletionText ? (stageOutput.responseOrigin || 'llm_free_generation') : 'silent_handoff';
 
                         if (!stageOutput.avancou) {
                             try {
@@ -4402,6 +4436,19 @@ serve(async (req) => {
                 }
             }
 
+            if (
+                !(finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks')
+                && /\n\s*---\s*\n/.test(String(out.text || ''))
+                && (!Array.isArray(out.atomicMessages) || out.atomicMessages.length <= 1)
+            ) {
+                // "---" nunca chega ao lead: vira separação de mensagens.
+                out.atomicMessages = String(out.text).split(/\n\s*---\s*\n/).map((part) => part.trim()).filter(Boolean);
+            }
+            if (Array.isArray(out.atomicMessages)) {
+                out.atomicMessages = out.atomicMessages
+                    .map((part: unknown) => String(part || '').replace(/^\s*---\s*$/gm, '').trim())
+                    .filter(Boolean);
+            }
             const outboundParts = Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0
                 ? out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean)
                 : [out.text];
