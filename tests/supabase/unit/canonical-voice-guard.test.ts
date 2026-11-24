@@ -65,3 +65,17 @@ describe('guard aceita as falas canonicas da especificacao', () => {
     expect(r.flow_narration_detected).toBe(false);
   });
 });
+
+import { classifyInboundAgainstStageState as classifyStageMessage } from '../../../supabase/functions/ai-processor/stage-state.ts';
+describe('area exata vira selecao de area', () => {
+  it('"Tecnologia" com pendencia de curso seleciona a area', () => {
+    const r: any = (classifyStageMessage as any)({
+      stage: 'E1',
+      latestUserMessage: 'Tecnologia',
+      leadSnapshot: { sales_context: { pending_criterion: 'course_selection', related_area_courses: ['Gestão da Tecnologia da Informação'] } },
+      history: [],
+      pendingCriterion: 'course_selection',
+    });
+    expect(r.classificationReason).toBe('selected_catalog_area');
+  });
+});

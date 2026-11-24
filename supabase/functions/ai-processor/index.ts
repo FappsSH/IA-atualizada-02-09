@@ -1344,6 +1344,15 @@ function e4TextFits(text: string | undefined | null, mustInclude: RegExp) {
     return !E4_FORBIDDEN_PAUSE_NARRATION.test(normalized);
 }
 
+// Reações de referência da especificação (E1), usadas só como rede de segurança.
+function buildCanonicalMotivationReaction(motivation: string) {
+    const m = normalizeText(motivation);
+    if (/(famil|mae|pai|irma|irmao|tio|tia|avo)/.test(m)) return 'Olha só, então isso já vem de família!! Muito legal você querer seguir esse caminho também.';
+    if (/(trabalh|atuo|atua|ja sou|profiss)/.test(m)) return 'Muito bom!! Então você já conhece um pouco desse universo na prática.';
+    if (/(oportunidade|proposta|surgiu|apareceu|concurso|vaga)/.test(m)) return 'Olha só, então essa graduação apareceu em uma ótima hora pra você!!';
+    return 'Olha só, que bacana!! Então é algo que você já queria há bastante tempo.';
+}
+
 function buildE4ProposalRequestFallback(generated?: string | null) {
     return e4TextFits(generated, /nome completo/) ? String(generated) : E4_PROPOSAL_REQUEST_CANONICAL;
 }
@@ -4242,6 +4251,18 @@ serve(async (req) => {
                 break;
             }
 
+            // Rede de segurança (spec E1): curso já validado nunca é chamado de indisponível na reação à motivação.
+            {
+                const salesCtx = (leadSnapshot?.sales_context || {}) as Record<string, unknown>;
+                const courseConfirmed = String(salesCtx.course_status || '').trim() === 'confirmed_available';
+                for (const item of collectedTexts) {
+                    if (item.stage !== 'E1' || !courseConfirmed) continue;
+                    const normalizedItem = normalizeText(String(item.text || ''));
+                    if (/(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos)/.test(normalizedItem)) {
+                        item.text = buildCanonicalMotivationReaction(String(salesCtx.motivacao_principal || leadSnapshot?.dor_principal || ''));
+                    }
+                }
+            }
             out = {
                 text: (() => {
                     const uniqueStages = Array.from(new Set(collectedTexts.map((item) => item.stage)));

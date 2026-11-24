@@ -792,7 +792,8 @@ export function classifyInboundAgainstStageState(params: {
 
   if (!normalized) return result;
 
-  if (stage === 'E1' && pendingCriterion === 'catalog_area_selection') {
+  const exactAreaMessage = /^(a\s+)?(area\s+(de|da|do)\s+)?(tecnologia|educacao|gastronomia|saude|saude e beleza|gestao e negocios|negocios|juridico e publico|ambiental e agro|criacao e midia|design e criacao)[.!]*$/.test(normalized);
+  if (stage === 'E1' && (pendingCriterion === 'catalog_area_selection' || exactAreaMessage)) {
     const selectedArea = matchCatalogAreaSelection(
       latestUserMessage,
       salesContext.available_catalog_areas || salesContext.available_areas || [],
