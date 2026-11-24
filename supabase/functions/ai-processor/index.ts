@@ -4465,6 +4465,17 @@ serve(async (req) => {
                 }
             }
 
+            if (finalSubagent === 'E5' && textAsksBoletoDate(String(out.text || '')) && !/meus parab[eé]ns/i.test(String(out.text || ''))) {
+                const congratulatedBefore = /meus parabens/.test(normalizeText((payload.history || [])
+                    .filter((h: any) => h?.role === 'assistant')
+                    .map((h: any) => h?.content || '')
+                    .join(' ')));
+                if (!congratulatedBefore) {
+                    // Spec E5: a primeira fala é sempre os parabéns canônicos + pergunta do boleto.
+                    out.text = buildE5BoletoQuestionFallback(false);
+                    out.atomicMessages = null;
+                }
+            }
             if (
                 !(finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks')
                 && /\n\s*---\s*\n/.test(String(out.text || ''))
