@@ -14,7 +14,7 @@ function Run($label, [scriptblock]$block) {
 function Fail($t) { Log "CHAVE_FAILED: $t"; exit 1 }
 
 Set-Location $proj
-$zip = Join-Path $base "AgentHub-atualizado.zip"
+$zip = Join-Path $base "AgentHub-atualizado-2.zip"
 if (Test-Path $zip) { Expand-Archive -Path $zip -DestinationPath $proj -Force; Log "codigo atualizado" }
 
 $line = Get-Content "$proj\.env.local" | Where-Object { $_ -match '^\s*OPENAI_API_KEY\s*=' } | Select-Object -First 1
