@@ -2,6 +2,7 @@
 // deno-lint-ignore-file
 // @ts-nocheck
 import { getInboundSkipReason } from '../_shared/inbound-filter.ts';
+import { canonicalLeadPhone, checkPriorRelationship, isPhoneIgnored, parseAdminLeadCommand, setPhoneIgnored } from '../_shared/lead-gate.ts';
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { sendMessage } from '../_shared/pgmq.ts';
@@ -699,6 +700,40 @@ serve(async (req) => {
         const isAdminMessage = isAuthorizedAdminPhone(telefone, runtimeConfig.adminPhone || '');
 
         if (isAdminMessage) {
+            const leadCommand = !replyToMessageId ? parseAdminLeadCommand(text) : null;
+            if (leadCommand) {
+                let ackText = '';
+                try {
+                    const result = await setPhoneIgnored({
+                        supabase,
+                        tenantId: TENANT_ID,
+                        phone: leadCommand.phone,
+                        ignored: leadCommand.action === 'ignore',
+                        source: 'admin_command',
+                    });
+                    ackText = leadCommand.action === 'ignore'
+                        ? `Feito. Não vou mais atender o número ${result.phone}.`
+                        : `Feito. Voltei a atender o número ${result.phone}.`;
+                } catch (error) {
+                    console.error('[webhook-receiver] falha no comando de lead do admin', String(error));
+                    ackText = 'Não consegui registrar esse comando agora. Tente de novo em instantes.';
+                }
+                await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/whatsapp-sender`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                    },
+                    body: JSON.stringify({
+                        telefone: runtimeConfig.adminPhone,
+                        text: ackText,
+                        skip_governance: true,
+                        persist_message: false,
+                    }),
+                }).catch((error) => console.error('[webhook-receiver] falha ao confirmar comando ao admin', String(error)));
+                continue;
+            }
+
             const completion = await (replyToMessageId
                 ? completeAdminCheckpointByReply({
                     supabase,
@@ -792,6 +827,36 @@ serve(async (req) => {
                 },
             }).catch(() => {});
             continue;
+        }
+
+        // ── Portão: só leads de verdade ─────────────────────────────────────
+        if (await isPhoneIgnored(supabase, TENANT_ID, telefone)) {
+            console.log('[webhook-receiver] contato na lista de nao atender, ignorado');
+            continue;
+        }
+        const knownLead = await findLeadByPhone(supabase, TENANT_ID, telefone).catch(() => null);
+        if (!knownLead?.id) {
+            const prior = await checkPriorRelationship({
+                baseUrl: resolveEdgeReachableUrl(runtimeConfig.evolution.baseUrl ?? ''),
+                apiKey: runtimeConfig.evolution.apiKey ?? '',
+                instanceName: body.instance ?? runtimeConfig.evolution.instanceName ?? '',
+                remoteJids: [m.key?.remoteJid, m.key?.remoteJidAlt].filter(Boolean).map(String),
+                currentMessageId: inboundMessageId || null,
+                currentTimestampSec: Number(m.messageTimestamp) || Math.floor(Date.now() / 1000),
+            }).catch((error) => ({ prior: false, reason: null, error: String(error) }));
+            if (prior.error) console.warn('[webhook-receiver] checagem de contato antigo incompleta:', prior.error);
+            if (prior.prior) {
+                await setPhoneIgnored({
+                    supabase,
+                    tenantId: TENANT_ID,
+                    phone: telefone,
+                    ignored: true,
+                    source: 'auto_prior_conversation',
+                    note: prior.reason,
+                }).catch((error) => console.error('[webhook-receiver] falha ao registrar contato antigo', String(error)));
+                console.log('[webhook-receiver] contato antigo, nao e lead:', prior.reason);
+                continue;
+            }
         }
 
         const resolvedLeadName = resolveTrustedLeadName({
