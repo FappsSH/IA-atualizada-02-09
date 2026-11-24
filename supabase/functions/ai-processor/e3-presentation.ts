@@ -60,35 +60,35 @@ export function buildE3PresentationMessages(params: {
     .map((fact) => String(fact.content || '').trim())
     .filter(Boolean);
 
-  const courseFacts = [
-    `Sobre ${courseName}, a ideia aqui e te mostrar de forma bem clara como essa formacao pode encaixar no seu momento.`,
-    motivation ? `E isso conversa diretamente com o motivo que voce compartilhou: ${motivation}.` : '',
-    durationText && durationYears
-      ? `O curso tem duracao de ${durationText}, ou seja, em ${durationYears} voce ja pode estar com seu diploma em maos.`
-      : durationText
-        ? `O curso tem duracao de ${durationText}.`
-        : '',
-    modality === 'EAD'
-      ? 'A forma de estudo e EAD, entao voce consegue conciliar melhor com a rotina que ja tem.'
-      : '',
-    modality === 'semipresencial'
-      ? 'A forma de estudo e semipresencial, com acompanhamento pela plataforma conforme funcionamento autorizado do curso.'
-      : '',
-    ...modalityFacts,
-  ].filter(Boolean);
+  const durationSentence = durationText && durationYears
+    ? `A graduação em ${courseName} tem duração de ${durationText}, o que equivale a ${durationYears}`
+    : durationText
+      ? `A graduação em ${courseName} tem duração de ${durationText}`
+      : `A graduação em ${courseName}`;
+  const modalitySentence = modality === 'EAD'
+    ? ', e a modalidade é EAD, então você assiste às aulas no dia e horário que melhor se encaixar na sua rotina, respeitando as datas e os compromissos acadêmicos.'
+    : modality === 'semipresencial'
+      ? ', e a modalidade é semipresencial, com aulas ao vivo pela plataforma nos primeiros semestres, numa experiência bem próxima da aula presencial.'
+      : '.';
+  const internshipSentence = hasInternship === true
+    ? 'Ela tem estágio, e ele pode ser realizado na sua própria cidade caso você não tenha condições de se deslocar até o polo.'
+    : hasInternship === false
+      ? 'E ela não tem estágio, então você não precisa se preocupar com deslocamento para essa etapa da formação.'
+      : '';
 
-  const supportAndInternshipFacts = [
-    ...tutoringFacts,
-    hasInternship === true
-      ? 'E como esse curso tem estagio, caso voce nao tenha condicoes de se deslocar ao polo semipresencial, ele pode ser realizado na sua propria cidade.'
-      : hasInternship === false
-        ? 'E como esse curso nao tem estagio, voce nao precisa se preocupar com deslocamento para realizar essa etapa da formacao.'
-        : '',
-  ].filter(Boolean);
+  const courseMessage = [
+    `${durationSentence}${modalitySentence}`,
+    ...tutoringFacts.slice(0, 1),
+    internshipSentence,
+  ].filter(Boolean).join('\n\n');
+
+  const motivationMessage = motivation
+    ? `E isso tem tudo a ver com o objetivo que você me contou. Essa formação é justamente o caminho para construir o que você está buscando nessa área, com uma estrutura que acompanha você do começo ao fim.`
+    : `E essa formação foi pensada para você construir sua trajetória nessa área com segurança, com uma estrutura que acompanha você do começo ao fim.`;
 
   const closing = firstName
-    ? `De todos esses pontos que eu trouxe pra voce ${firstName}, o que mais chamou sua atencao e mais fez sentido pra voce?`
-    : 'De todos esses pontos que eu trouxe pra voce, o que mais chamou sua atencao e mais fez sentido pra voce?';
+    ? `De todos esses pontos que eu te apresentei ${firstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`
+    : 'De todos esses pontos que eu te apresentei, quais foram os que você mais gostou e que mais fizeram sentido pra você?';
 
   const expectedClaims = [
     'institution_is_university',
@@ -106,8 +106,8 @@ export function buildE3PresentationMessages(params: {
 
   return {
     messages: [
-      courseFacts.join('\n\n'),
-      supportAndInternshipFacts.join('\n\n'),
+      courseMessage,
+      motivationMessage,
       closing,
     ],
     pendingClaims,

@@ -50,10 +50,18 @@ function sanitizeParagraph(paragraph: string) {
   let next = String(paragraph || '').trim();
   if (!next) return '';
 
+  // Remove a frase inteira (nunca corta no meio da frase).
+  next = next
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !/estou aqui para (te )?ajudar|estou [àa] disposi[cç][aã]o/i.test(sentence))
+    .join(' ');
+
   next = next
     .replace(/\bAREA BASICA DE INGRESSO\b/gi, '')
     .replace(/\bABI\b/gi, '')
     .replace(/\bCST\s+EM\s+/gi, '')
+    .replace(/\b(é|e)\s+um\s+tecn[oó]logo\b/gi, '$1 uma graduação tecnológica')
+    .replace(/\bum\s+tecn[oó]logo\b/gi, 'uma graduação tecnológica')
     .replace(/\bTecn[oó]logo\b/gi, 'graduação')
     .replace(/\bAstrof[ií]sica\s+Qu[aâ]ntica\b/gi, 'essa graduação específica')
     .replace(/\bgradua[cç][aã]o em essa gradua[cç][aã]o espec[ií]fica\b/gi, 'graduação específica')
@@ -61,8 +69,6 @@ function sanitizeParagraph(paragraph: string) {
     .replace(/^\s*e?\s*para continuarmos,?\s*/gi, '')
     .replace(/\bpara seguirmos,?\s*poderia me informar\b/gi, 'me informa')
     .replace(/\bpara continuarmos,?\s*poderia me informar\b/gi, 'me informa')
-    .replace(/\s*Estou aqui para ajudar[^.!?]*[.!?]?/gi, '')
-    .replace(/\s*Mas estou aqui para ajudar[^.!?]*[.!?]?/gi, '')
     .replace(/\bP\s*EGRESSO\b/gi, '')
     .replace(/\bEGRESSO\b/gi, '')
     .replace(/\(\s*\)/g, '')

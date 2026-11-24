@@ -24,7 +24,7 @@ describe('E3 structural presentation', () => {
     expect(formatDurationYearsFromSemesters(5)).toBe('2 anos e meio');
   });
 
-  it('gera 3 blocos na ordem curso estagio/conexao fechamento', () => {
+  it('gera 3 blocos na ordem curso+estagio, ligacao com o objetivo, pergunta final', () => {
     const result = buildE3PresentationMessages({
       authorizedFacts: adminFacts,
       leadSnapshot: {
@@ -36,6 +36,7 @@ describe('E3 structural presentation', () => {
           course_display_name: 'CST em Radiologia',
           duration_semesters: 6,
           has_internship: true,
+          motivacao_principal: 'Ja trabalho na area e quero me especializar',
         },
       },
     });
@@ -45,9 +46,12 @@ describe('E3 structural presentation', () => {
     expect(result.messages[0]).toContain('6 semestres');
     expect(result.messages[0]).toContain('3 anos');
     expect(result.messages[0]).toContain('EAD');
-    expect(result.messages[1]).toContain('estagio');
-    expect(result.messages[1]).toContain('cidade');
+    expect(result.messages[0]).toContain('estágio');
+    expect(result.messages[0]).toContain('cidade');
+    expect(result.messages[1]).toContain('objetivo');
     expect(result.messages[2]).toContain('Jessica');
+    expect(result.messages[2]).toContain('mais gostou');
+    expect(result.messages.join(' ')).not.toMatch(/\b(voce|nao|duracao|graduacao)\b/);
     });
 
   it('apresenta a ausencia de estagio como vantagem', () => {
@@ -61,8 +65,8 @@ describe('E3 structural presentation', () => {
       },
     });
 
-    expect(result.messages[1]).toContain('nao tem estagio');
-    expect(result.messages[1]).toContain('deslocamento');
+    expect(result.messages[0]).toContain('não tem estágio');
+    expect(result.messages[0]).toContain('deslocamento');
   });
 
   it('deriva estagio para toda licenciatura e bacharelado da saude', () => {

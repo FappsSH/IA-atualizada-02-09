@@ -120,7 +120,7 @@ function looksLikeContextualAffirmativeReply(message: string) {
   const words = normalized.split(' ').filter(Boolean);
   if (words.length === 0 || words.length > 6) return false;
 
-  if (includesAny(normalized, ['nao', 'n„o', 'nunca', 'sem viagem', 'sem mudanca', 'sem mudanÁa'])) return false;
+  if (includesAny(normalized, ['nao', 'n√£o', 'nunca', 'sem viagem', 'sem mudanca', 'sem mudan√ßa'])) return false;
 
   return (
     ['sim', 'tenho', 'tenho sim', 'sim tenho', 'sim eu tenho', 'eu tenho', 'vou sim', 'preciso sim', 'talvez sim'].includes(normalized)
@@ -211,7 +211,7 @@ function looksLikeResolvedMotivationReply(message: string) {
   ])) return true;
 
   const hasAffinityMotivation = /\bidentific\w*/.test(normalized)
-    && includesAny(normalized, ['sempre', 'muito', 'area', '·rea', 'ela', 'curso', 'graduacao', 'graduaÁ„o']);
+    && includesAny(normalized, ['sempre', 'muito', 'area', '√°rea', 'ela', 'curso', 'graduacao', 'gradua√ß√£o']);
   if (hasAffinityMotivation) return true;
 
   const hasIntent = includesAny(normalized, ['quero', 'preciso', 'tenho vontade', 'pretendo']);

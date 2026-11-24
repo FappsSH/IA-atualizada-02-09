@@ -570,11 +570,11 @@ export function detectPersonalityOutputViolations(params: {
     && String(params.processAction || '').trim() === 'complete_stage'
   ) {
     const inbound = normalizeText(params.latestUserMessage || '');
-    const familyMotivation = textIncludesAny(inbound, ['familia', 'famÌlia', 'mae', 'm„e', 'pai', 'marido', 'esposa']);
-    const familyReaction = textIncludesAny(normalized, ['familia', 'famÌlia', 'caminho', 'seguir', 'tradicao', 'tradiÁ„o']);
+    const familyMotivation = textIncludesAny(inbound, ['familia', 'fam√≠lia', 'mae', 'm√£e', 'pai', 'marido', 'esposa']);
+    const familyReaction = textIncludesAny(normalized, ['familia', 'fam√≠lia', 'caminho', 'seguir', 'tradicao', 'tradi√ß√£o']);
     const dreamMotivation = textIncludesAny(inbound, ['sonho', 'sonhei', 'sempre quis', 'objetivo']);
     const dreamReaction = textIncludesAny(normalized, ['sonho', 'objetivo', 'realizar', 'conquistar', 'caminho']);
-    const workMotivation = textIncludesAny(inbound, ['trabalho', 'trabalha', 'atuo', 'area', '·rea', 'concurso', 'proposta', 'oportunidade']);
+    const workMotivation = textIncludesAny(inbound, ['trabalho', 'trabalha', 'atuo', 'area', '√°rea', 'concurso', 'proposta', 'oportunidade']);
     const workReaction = textIncludesAny(normalized, ['trabalho', 'profissional', 'area', '√°rea', 'concurso', 'oportunidade', 'experiencia', 'experi√™ncia', 'caminho']);
     const shortIntensifierReaction = /^(excelente|que legal|muito bom|perfeito)!!$/.test(normalized);
     if (
@@ -687,7 +687,7 @@ if (
   if (
     params.stage === 'E2'
     && String(params.processAction || '').trim() === 'ask_vaccine_decider'
-    && textIncludesAny(normalized, ['viagem', 'viajar', 'mudanca', 'mudanÁa', 'mudar'])
+    && textIncludesAny(normalized, ['viagem', 'viajar', 'mudanca', 'mudan√ßa', 'mudar'])
   ) {
     violations.push('repeated_resolved_topic');
   }
@@ -712,7 +712,7 @@ if (
   if (
     params.stage === 'E2'
     && String(params.processAction || '').trim() === 'ask_vaccine_availability'
-    && textIncludesAny(normalizeText(params.latestUserMessage || ''), ['converso com', 'marido', 'esposa', 'mae', 'm„e', 'pai', 'familia', 'famÌlia', 'eu mesmo', 'eu mesma', 'sozinho', 'so eu', 'sÛ eu', 'decido'])
+    && textIncludesAny(normalizeText(params.latestUserMessage || ''), ['converso com', 'marido', 'esposa', 'mae', 'm√£e', 'pai', 'familia', 'fam√≠lia', 'eu mesmo', 'eu mesma', 'sozinho', 'so eu', 's√≥ eu', 'decido'])
   ) {
     violations.push('repeated_previous_question_after_decider_answer');
   }
@@ -720,7 +720,7 @@ if (
   if (
     params.stage === 'E1'
     && String(params.processAction || '').trim() === 'ask_motivation'
-    && textIncludesAny(normalized, ['para entender melhor sua motivacao', 'para entender melhor sua motivaÁ„o', 'gostaria de saber um pouco mais sobre o que te motiva', 'agora falta apenas entender sua motivacao', 'agora falta apenas entender sua motivaÁ„o'])
+    && textIncludesAny(normalized, ['para entender melhor sua motivacao', 'para entender melhor sua motiva√ß√£o', 'gostaria de saber um pouco mais sobre o que te motiva', 'agora falta apenas entender sua motivacao', 'agora falta apenas entender sua motiva√ß√£o'])
   ) {
     violations.push('motivation_process_preamble');
   }
@@ -728,8 +728,8 @@ if (
     params.stage === 'E1'
     && String(params.processAction || '').trim() === 'ask_motivation'
     && /\?/.test(String(params.text || '').split(/\n+/)[0] || '')
-    && textIncludesAny(normalized, ['ja trabalha', 'j· trabalha', 'representa um sonho', 'objetivo pessoal'])
-    && textIncludesAny(normalized, ['o que te motiva', 'o que te motivou', 'qual sua motivacao', 'qual sua motivaÁ„o'])
+    && textIncludesAny(normalized, ['ja trabalha', 'j√° trabalha', 'representa um sonho', 'objetivo pessoal'])
+    && textIncludesAny(normalized, ['o que te motiva', 'o que te motivou', 'qual sua motivacao', 'qual sua motiva√ß√£o'])
   ) {
     violations.push('motivation_opening_should_be_statement');
   }
@@ -779,7 +779,7 @@ if (
   if (
     params.stage === 'E2'
     && String(params.processAction || '').trim() === 'ask_vaccine_decider'
-    && textIncludesAny(normalized, ['matricula', 'matrÌcula'])
+    && textIncludesAny(normalized, ['matricula', 'matr√≠cula'])
   ) {
     violations.push('e2_decider_used_matricula');
   }

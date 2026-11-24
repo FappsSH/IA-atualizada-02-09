@@ -170,8 +170,8 @@ export const TOOL_SCHEMAS: Record<string, ToolSpec> = {
             name: 'notificar_admin',
             description:
                 'Notifica o administrador do sistema sobre um evento importante via WhatsApp. ' +
-                'Use quando: lead perguntou valor antes da etapa certa, lead confirmou matrícula, ' +
-                'lead pediu desconto, ou quando você não souber responder algo. ' +
+                'Use somente quando: lead pediu desconto, lead relatou restrição financeira, ' +
+                'ou quando você não souber responder algo. Proposta e matrícula já notificam o administrador pelo fluxo; não use para isso. ' +
                 'A notificação é interna — o lead não vê. Continue a conversa normalmente após notificar.',
             parameters: {
                 type: 'object',
@@ -180,9 +180,6 @@ export const TOOL_SCHEMAS: Record<string, ToolSpec> = {
                     motivo: {
                         type: 'string',
                         enum: [
-                            'lead_perguntou_valor_antes_etapa',
-                            'lead_pronto_matricula',
-                            'matricula_confirmada',
                             'lead_pediu_desconto',
                             'restricao_financeira',
                             'nao_sei_responder',

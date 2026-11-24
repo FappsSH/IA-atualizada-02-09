@@ -39,6 +39,10 @@ const PROCESSING_STALE_MS = Number(Deno.env.get('AI_PROCESSOR_PROCESSING_STALE_M
 
 const PHONE_LIKE = /^\+?\d{10,15}$/;
 
+
+// Spec (adendo 24/11): a AgentHub não pede o nome do lead; sem nome confiável segue sem vocativo.
+const E1_NAME_GATE_ENABLED = false;
+
 function pendingCriterionFromProcessAction(processAction: string | null | undefined) {
     switch (String(processAction || '').trim()) {
         case 'ask_city':
@@ -125,18 +129,18 @@ function userExpressedCommercialInterest(message: string) {
         'faz sentido',
         'quero fazer',
         'e isso que procuro',
-        '� isso que procuro',
+        'é isso que procuro',
         'parece bom',
         'quero seguir',
         'quero sim',
         'tenho interesse',
         'curti',
         'nao tenho duvidas',
-        'n�o tenho d�vidas',
+        'não tenho dúvidas',
         'sem duvidas',
-        'sem d�vidas',
+        'sem dúvidas',
         'nenhuma duvida',
-        'nenhuma d�vida',
+        'nenhuma dúvida',
     ]);
 }
 
@@ -1145,7 +1149,11 @@ function extractFullNameCandidate(message: string) {
 }
 
 function buildE6PhoneFallback() {
-    return 'Perfeito.\n\nAgora me passa o telefone dessa pessoa, por favor.';
+    return 'E qual o telefone dela?';
+}
+
+function buildE6InvitationText() {
+    return 'Antes de encerrarmos, quero te fazer um último convite.\n\nTem alguém próximo de você que também esteja pensando em começar uma graduação e que você gostaria de indicar?';
 }
 
 function buildE6SatisfactionFallback() {
@@ -1185,7 +1193,7 @@ function userDidNotRecommendService(message: string) {
 }
 
 function buildE6AskIndicationNameFallback() {
-    return 'Que bom saber disso!!\n\nTem alguém próximo de você que também esteja pensando em começar uma graduação e que você gostaria de indicar?\n\nSe sim, me passa primeiro o nome dessa pessoa.';
+    return 'Perfeito!! Me passa primeiro o nome dessa pessoa.';
 }
 
 function shouldRedirectE6NameToPhone(params: {
@@ -1205,8 +1213,7 @@ function shouldRedirectE6NameToPhone(params: {
 }
 
 function buildE7ClosingFallback(indicatedName: string) {
-    const safeName = indicatedName || 'a pessoa que você indicou';
-    return `Perfeito!! Se puder, avise ${safeName} que alguém aqui da instituição poderá entrar em contato para apresentar melhor as possibilidades de graduação. Assim, essa pessoa já sabe de onde veio o contato.\n\nFoi um prazer enorme acompanhar você até aqui!! Te desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa para você.`;
+    return 'Perfeito!! A pessoa que você indicou poderá receber um contato nosso para conhecer melhor as possibilidades de graduação.\n\nFoi um prazer enorme te acompanhar até aqui!!\n\nTe desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa pra você.';
 }
 
 function textAsksIndicatedCourseDetails(text: string | undefined) {
@@ -1301,16 +1308,36 @@ function assistantAskedProposalNameQuestion(history: Array<{ role?: string; cont
     ]);
 }
 
-function buildE4ProposalRequestFallback() {
-    return 'Antes de eu te mostrar essa proposta, preciso do seu nome completo.\n\nE fica tranquilo: isso nao gera nenhum compromisso. E so para eu te enviar um documento com as informacoes e as condicoes da bolsa de estudos.';
+// Falas canônicas da especificação (E4). Usadas somente quando a fala gerada
+// pela PERSONALITY não cumprir o momento estrutural do checkpoint.
+const E4_PROPOSAL_REQUEST_CANONICAL = 'Perfeito!!\n\nAgora me confirma seu nome completo, por gentileza.';
+const E4_PROPOSAL_PAUSE_CANONICAL = 'Vou preparar sua proposta com todas as informações e condições que conseguimos pra você.\n\nE fica tranquilo, isso não gera nenhum compromisso. É só para você conseguir analisar tudo certinho.';
+const E4_FORBIDDEN_PAUSE_NARRATION = /(aguard|um momento|vou verificar|vou consultar|administrativ|libera|encaminh|vou acionar|assim que (estiver|ele estiver)|continuo daqui|checkpoint|etapa)/;
+
+function e4TextFits(text: string | undefined | null, mustInclude: RegExp) {
+    const normalized = normalizeText(String(text || ''));
+    if (!normalized) return false;
+    if (!mustInclude.test(normalized)) return false;
+    return !E4_FORBIDDEN_PAUSE_NARRATION.test(normalized);
 }
 
-function buildE4ProposalPauseFallback() {
-    return 'Perfeito.\n\nVou organizar esse documento para voce agora e, assim que ele estiver pronto, continuo daqui com voce.';
+function buildE4ProposalRequestFallback(generated?: string | null) {
+    return e4TextFits(generated, /nome completo/) ? String(generated) : E4_PROPOSAL_REQUEST_CANONICAL;
 }
 
-function buildE4EnrollmentPauseFallback() {
-    return 'Perfeito.\n\nVou encaminhar a sua matricula para conclusao agora e, assim que estiver liberado por aqui, eu continuo com voce.';
+function buildE4ProposalPauseFallback(generated?: string | null) {
+    return e4TextFits(generated, /proposta/) && /compromisso/.test(normalizeText(String(generated || '')))
+        ? String(generated)
+        : E4_PROPOSAL_PAUSE_CANONICAL;
+}
+
+function buildE4EnrollmentPauseFallback(generated?: string | null) {
+    // Pausa de matrícula é invisível: só uma reação curta, sem narrar processo.
+    const normalized = normalizeText(String(generated || ''));
+    if (normalized && normalized.length <= 160 && !E4_FORBIDDEN_PAUSE_NARRATION.test(normalized) && !/\?/.test(String(generated))) {
+        return String(generated);
+    }
+    return 'Perfeito!!';
 }
 
 function extractRecentUserMessages(
@@ -1362,7 +1389,7 @@ function isE4PostProposalObjection(message: string, intelligence: Record<string,
     const normalized = normalizeText(message);
     return textIncludesAny(normalized, [
         'nao consigo', 'nao posso', 'nao vou conseguir', 'nao tenho certeza',
-        'preciso pensar', 'quero pensar', 'tenho uma duvida', 'tenho uma d�vida',
+        'preciso pensar', 'quero pensar', 'tenho uma duvida', 'tenho uma dúvida',
         'quanto custa', 'qual o valor', 'mensalidade', 'esta caro',
     ]);
 }
@@ -1531,7 +1558,7 @@ function buildE6NoIndicationFallback() {
 }
 
 function buildE7NoIndicationClosingFallback() {
-    return 'Foi um prazer enorme acompanhar você até aqui!!\n\nTe desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa para você.';
+    return 'Foi um prazer enorme te acompanhar até aqui!!\n\nTe desejo muito sucesso nessa nova fase e que essa graduação seja o começo de muita coisa boa pra você.';
 }
 
 function detectBoletoDateChoice(message: string) {
@@ -2186,7 +2213,7 @@ serve(async (req) => {
             }
         }
 
-        if (payload.etapa_atual === 'E1' && !trustedNameAlreadyPresent && pendingPreNameInput) {
+        if (E1_NAME_GATE_ENABLED && payload.etapa_atual === 'E1' && !trustedNameAlreadyPresent && pendingPreNameInput) {
             const resolvedName = resolveTrustedLeadName({ explicitName: lastUserMessage });
             if (resolvedName.leadNameUsed) {
                 const nameUpdate = await supabase
@@ -2301,7 +2328,7 @@ serve(async (req) => {
                 || Boolean(nameGateFallbackCourseQuery)
             );
 
-        if (nameGateCommercialIntent && !trustedNameAlreadyPresent) {
+        if (E1_NAME_GATE_ENABLED && nameGateCommercialIntent && !trustedNameAlreadyPresent) {
             const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
                 pending_pre_name_input: lastUserMessage,
                 pending_pre_name_started_at: new Date().toISOString(),
@@ -3474,12 +3501,12 @@ serve(async (req) => {
                             stageOutput.avancou = false;
                             stageOutput.skipTakeoverSend = true;
                             stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE4ProposalPauseFallback();
+                            stageOutput.text = buildE4ProposalPauseFallback(stageOutput.text);
                         } else {
                             stageOutput.handoff = false;
                             stageOutput.avancou = false;
                             stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE4ProposalRequestFallback();
+                            stageOutput.text = buildE4ProposalRequestFallback(stageOutput.text);
                         }
                     } else if (!enrollmentCompleted && userRequestedEnrollment(activeLastUserMessage)) {
                         await createCheckpointAndPause({
@@ -3502,7 +3529,7 @@ serve(async (req) => {
                         stageOutput.avancou = false;
                         stageOutput.skipTakeoverSend = true;
                         stageOutput.toolCalls = filterHandoffToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                        stageOutput.text = buildE4EnrollmentPauseFallback();
+                        stageOutput.text = buildE4EnrollmentPauseFallback(stageOutput.text);
                     } else if (!enrollmentCompleted && stageOutput.avancou) {
                         stageOutput.avancou = false;
                         stageOutput.toolCalls = filterAdvanceToolCalls(stageOutput.toolCalls);
@@ -3603,71 +3630,21 @@ serve(async (req) => {
                         }
                     };
 
-                    const satisfactionResolvedThisTurn = String(stageState.classificationReason || '') === 'resolved_pending_service_satisfaction';
-                    const satisfactionCollected = !satisfactionResolvedThisTurn
-                        && (e6Context.e6_satisfaction_collected === true || e6Context.e6_feedback_collected === true);
-                    if (!satisfactionCollected) {
-                        if (negativeFeedback) {
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                e6_satisfaction_collected: true,
-                                e6_satisfaction_positive: false,
-                                e6_feedback_collected: true,
-                                e6_recommended_service: false,
-                                no_indication: true,
-                                pending_criterion: null,
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.text = 'Entendo. Obrigado pela sinceridade.';
-                            await stopE6('apos feedback negativo');
-                        } else if (positiveFeedback) {
-                            const recommendationAlreadyAnswered = explicitRecommendation;
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                e6_satisfaction_collected: true,
-                                e6_satisfaction_positive: true,
-                                e6_feedback_collected: recommendationAlreadyAnswered,
-                                e6_recommended_service: recommendationAlreadyAnswered ? true : null,
-                                no_indication: false,
-                                pending_criterion: recommendationAlreadyAnswered ? 'referral_name' : 'service_recommendation',
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = recommendationAlreadyAnswered
-                                ? buildE6AskIndicationNameFallback()
-                                : buildE6RecommendationFallback();
-                        } else {
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE6SatisfactionFallback();
-                        }
-                    } else if (e6Context.e6_feedback_collected !== true) {
-                        if (negativeFeedback) {
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                e6_feedback_collected: true,
-                                e6_recommended_service: false,
-                                no_indication: true,
-                                pending_criterion: null,
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.text = 'Tranquilo!!';
-                            await stopE6('apos recomendacao negativa');
-                        } else if (positiveFeedback) {
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                e6_feedback_collected: true,
-                                e6_recommended_service: true,
-                                no_indication: false,
-                                pending_criterion: 'referral_name',
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE6AskIndicationNameFallback();
-                        } else {
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE6RecommendationFallback();
-                        }
-                    } else if (e6Context.e6_recommended_service === true) {
+                    // Spec (adendo 24/11): E6 começa direto no convite de indicação, sem pergunta de satisfação.
+                    if (e6Context.e6_invite_sent !== true && e6Context.e6_recommended_service !== true) {
+                        const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                            e6_invite_sent: true,
+                            e6_satisfaction_collected: true,
+                            e6_feedback_collected: true,
+                            e6_recommended_service: true,
+                            no_indication: false,
+                            pending_criterion: 'referral_name',
+                        });
+                        leadSnapshot.sales_context = nextSalesContext;
+                        stageOutput.avancou = false;
+                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        stageOutput.text = buildE6InvitationText();
+                    } else {
                         if (userDeclinedIndication(activeLastUserMessage)) {
                             console.warn('[ai-processor] lead sem indicacao; avancando E6->E7');
                             const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
@@ -3729,9 +3706,6 @@ serve(async (req) => {
                                 ? buildE6PhoneFallback()
                                 : buildE6AskIndicationNameFallback();
                         }
-                    } else {
-                        stageOutput.text = buildE6NoIndicationFallback();
-                        await stopE6('sem recomendacao');
                     }
                 }
 

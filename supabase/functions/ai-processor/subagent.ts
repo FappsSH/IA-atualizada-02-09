@@ -1648,7 +1648,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   }
   if (isMediaPlaceholderMessage(latestUserMessage)) {
     out.text = normalizeMessageText(
-      'Nao consegui entender seu audio por aqui.\n\nPode me mandar em texto ou reenviar o audio, por favor?',
+      'Não consegui entender seu áudio por aqui.\n\nPode me mandar em texto ou reenviar o áudio, por favor?',
     );
     out.responseOrigin = 'structural_fallback';
     out.fallbackUsed = true;
@@ -1861,11 +1861,12 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   }
   out.personalityPromptId = personalityPromptId;
   out.stagePromptId = stagePromptId;
-  if (
+  // Desativado: a fala vem da PERSONALITY + prompt da E1 (spec: sem segunda voz).
+  if (false && (
     input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_city'
     && pendingCriterionAfter === 'motivation'
-  ) {
+  )) {
     out.text = normalizeMessageText(buildE1AskMotivationReply());
     out.rawModelOutput = out.text;
     out.outputBeforeGovernance = out.text;
@@ -1876,11 +1877,12 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     out.conversationalBehavior = 'ask_motivation';
     return out;
   }
-  if (
+  // Desativado: a fala vem da PERSONALITY + prompt da E1 (spec: sem segunda voz).
+  if (false && (
     input.etapaAtual === 'E1'
     && stageState.classificationReason === 'resolved_pending_motivation'
     && pendingCriterionAfter === null
-  ) {
+  )) {
     out.text = normalizeMessageText(buildE1CompletionAcknowledgement({
       latestUserMessage,
       courseName: deriveSpeakableCourseName(currentCourseInterest, currentSalesContext),
