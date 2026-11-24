@@ -4254,11 +4254,14 @@ serve(async (req) => {
             // Rede de segurança (spec E1): curso já validado nunca é chamado de indisponível na reação à motivação.
             {
                 const salesCtx = (leadSnapshot?.sales_context || {}) as Record<string, unknown>;
-                const courseConfirmed = String(salesCtx.course_status || '').trim() === 'confirmed_available';
+                // Se a E1 foi concluída neste turno (há fala da E2), o curso já estava validado.
+                const courseConfirmed = String(salesCtx.course_status || '').trim() === 'confirmed_available'
+                    || collectedTexts.some((entry) => entry.stage === 'E2')
+                    || Boolean(String(leadSnapshot?.curso_interesse || '').trim() && leadSnapshot?.etapa_atual !== 'E1');
                 for (const item of collectedTexts) {
                     if (item.stage !== 'E1' || !courseConfirmed) continue;
                     const normalizedItem = normalizeText(String(item.text || ''));
-                    if (/(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos)/.test(normalizedItem)) {
+                    if (/(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos|outras opcoes|alternativas)/.test(normalizedItem)) {
                         item.text = buildCanonicalMotivationReaction(String(salesCtx.motivacao_principal || leadSnapshot?.dor_principal || ''));
                     }
                 }

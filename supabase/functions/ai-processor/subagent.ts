@@ -2588,7 +2588,12 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
     }
   }
 
-  if (mustConsultCourseBeforeReply && !hasAnyCourseLookup(out.toolCalls)) {
+  // Resposta de cidade/motivação com curso já confirmado nunca dispara nova busca de curso
+  // (evita "não temos esse curso" para frases como "minha família toda fez").
+  const answeringQualificationWithConfirmedCourse = input.etapaAtual === 'E1'
+    && ['city', 'motivation'].includes(String(pendingCriterionBefore || ''))
+    && String(currentSalesContext.course_status || '').trim() === 'confirmed_available';
+  if (mustConsultCourseBeforeReply && !answeringQualificationWithConfirmedCourse && !hasAnyCourseLookup(out.toolCalls)) {
     const initialQuery = buildCourseQueryCandidate(effectiveCatalogIntent.query || latestUserMessage);
     if (initialQuery) {
       if (tracePrompts) {
