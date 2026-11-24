@@ -218,6 +218,16 @@ function systemNarrationMatches(normalized: string) {
   });
 }
 
+
+// Lead com viagem/mudança planejada: a explicação pela modalidade (spec E2) é esperada.
+function leadReportedTravelOrMove(message: string | null | undefined) {
+  const inbound = normalizeText(String(message || ''));
+  if (!inbound) return false;
+  const mentions = /(viag|viaj|mudanc|mudar|mudo|me mudo|vou morar)/.test(inbound);
+  const negative = /^(nao|n|nada|nenhum|nenhuma)\b|\b(nao tenho|nao vou|nenhuma viagem|nenhuma mudanca|sem viagem|sem mudanca|nao pretendo|nao planejo)\b/.test(inbound);
+  return mentions && !negative;
+}
+
 const TECHNICAL_COURSE_NAME_PATTERNS = [
   /\bcst\b/i,
   /\babi\b/i,
@@ -573,9 +583,9 @@ export function detectPersonalityOutputViolations(params: {
     const familyMotivation = textIncludesAny(inbound, ['familia', 'família', 'mae', 'mãe', 'pai', 'marido', 'esposa']);
     const familyReaction = textIncludesAny(normalized, ['familia', 'família', 'caminho', 'seguir', 'tradicao', 'tradição']);
     const dreamMotivation = textIncludesAny(inbound, ['sonho', 'sonhei', 'sempre quis', 'objetivo']);
-    const dreamReaction = textIncludesAny(normalized, ['sonho', 'objetivo', 'realizar', 'conquistar', 'caminho']);
+    const dreamReaction = textIncludesAny(normalized, ['sonho', 'objetivo', 'realizar', 'conquistar', 'caminho', 'queria', 'bastante tempo', 'ha tempo', 'há tempo', 'desejo']);
     const workMotivation = textIncludesAny(inbound, ['trabalho', 'trabalha', 'atuo', 'area', 'área', 'concurso', 'proposta', 'oportunidade']);
-    const workReaction = textIncludesAny(normalized, ['trabalho', 'profissional', 'area', 'área', 'concurso', 'oportunidade', 'experiencia', 'experiência', 'caminho']);
+    const workReaction = textIncludesAny(normalized, ['trabalho', 'profissional', 'area', 'área', 'concurso', 'oportunidade', 'experiencia', 'experiência', 'caminho', 'pratica', 'prática', 'universo', 'otima hora', 'ótima hora', 'boa hora']);
     const shortIntensifierReaction = /^(excelente|que legal|muito bom|perfeito)!!$/.test(normalized);
     if (
       !shortIntensifierReaction
@@ -687,6 +697,7 @@ if (
   if (
     params.stage === 'E2'
     && String(params.processAction || '').trim() === 'ask_vaccine_decider'
+    && !leadReportedTravelOrMove(params.latestUserMessage)
     && textIncludesAny(normalized, ['viagem', 'viajar', 'mudanca', 'mudança', 'mudar'])
   ) {
     violations.push('repeated_resolved_topic');
@@ -704,6 +715,7 @@ if (
   if (
     params.stage === 'E2'
     && String(params.processAction || '').trim() === 'ask_vaccine_decider'
+    && !leadReportedTravelOrMove(params.latestUserMessage)
     && textIncludesAny(normalized, ['viagem', 'viajar', 'mudanca', 'mudar', 'programada', 'planejada'])
   ) {
     violations.push('operational_answer_overvalidation');
