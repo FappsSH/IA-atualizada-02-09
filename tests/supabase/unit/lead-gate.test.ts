@@ -60,6 +60,12 @@ describe('evaluatePriorRelationship', () => {
       contacts: [{ createdAt: new Date((now - 3 * 86400) * 1000).toISOString() }],
     })).toEqual({ prior: true, reason: 'contact_known_before' });
   });
+  it('contato salvo na agenda (isSaved da Evolution)', () => {
+    expect(evaluatePriorRelationship({
+      currentTimestampSec: now,
+      contacts: [{ isSaved: true, createdAt: new Date(now * 1000).toISOString() }],
+    })).toEqual({ prior: true, reason: 'saved_contact' });
+  });
   it('rajada de mensagens do mesmo lead novo nao conta como conversa antiga', () => {
     expect(evaluatePriorRelationship({
       currentMessageId: 'M3',

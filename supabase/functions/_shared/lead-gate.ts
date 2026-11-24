@@ -114,6 +114,7 @@ export function evaluatePriorRelationship(params: {
   }
 
   for (const contact of params.contacts || []) {
+    if (contact?.isSaved === true) return { prior: true, reason: 'saved_contact' };
     const createdAt = toEpochSeconds(contact?.createdAt);
     if (createdAt !== null && createdAt < threshold) return { prior: true, reason: 'contact_known_before' };
   }
