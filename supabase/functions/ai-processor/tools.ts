@@ -119,7 +119,42 @@ function looksLikeE1MotivationOnly(value: unknown) {
     ].some((pattern) => normalized.includes(pattern));
 }
 
+
+const EXACT_CATALOG_AREA_NAMES = new Set([
+    'tecnologia', 'educacao', 'gastronomia', 'saude', 'saude e beleza', 'gestao e negocios', 'gestao',
+    'negocios', 'juridico e publico', 'ambiental e agro', 'criacao e midia', 'design e criacao',
+]);
+
+function isExactCatalogAreaName(query: string | null | undefined) {
+    const normalized = String(query || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/^(area|a area|area de|area da|area do)\s+/, '')
+        .replace(/[^a-z\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return EXACT_CATALOG_AREA_NAMES.has(normalized);
+}
+
 async function validateStageAdvance(ctx: ToolContext, currentStage: string, nextStage: string) {
+    // Spec: E4 -> E5 só acontece depois que o admin conclui a matrícula (checkpoint), nunca pela IA.
+    if (currentStage === 'E4' && nextStage !== 'E4') {
+        const { data: leadState } = await ctx.supabase
+            .from('leads')
+            .select('sales_context')
+            .eq('id', ctx.leadId)
+            .maybeSingle();
+        if ((leadState?.sales_context as any)?.enrollment_checkpoint_completed !== true) {
+            return {
+                ok: false,
+                blocked: true,
+                reason: 'enrollment_not_completed',
+                etapa_atual: currentStage,
+                etapa_destino: nextStage,
+            };
+        }
+    }
     const pendingCheckpoint = await getPendingAdminCheckpoint(ctx.supabase, ctx.leadId);
     if (pendingCheckpoint?.id) {
         return {
@@ -1366,7 +1401,7 @@ export async function tool_consultar_conhecimento(
         const useCurrentCourseContext = Boolean(currentCourseInterest)
             && looksLikeCourseContextFollowupQuery(normalizedQuery);
         const effectiveQuery = useCurrentCourseContext ? currentCourseInterest : normalizedQuery;
-        let lookupMode = String(args.lookup_mode_hint || '').trim() || detectCatalogLookupMode(effectiveQuery);
+        let lookupMode = String(args.lookup_mode_hint || '').trim() || (isExactCatalogAreaName(effectiveQuery) ? 'browse_area' : detectCatalogLookupMode(effectiveQuery));
         const structuredEntries = await fetchStructuredCourseEntries(ctx);
         let matchedEntryForPersistence: any = null;
 
@@ -1392,6 +1427,7 @@ export async function tool_consultar_conhecimento(
                 lookupMode !== 'specific'
                 // Área escolhida pelo lead na lista de áreas: nunca vira curso específico por alias parcial.
                 && String(args.lookup_mode_hint || '').trim() !== 'browse_area'
+                && !isExactCatalogAreaName(effectiveQuery)
                 && !hasBroadBrowseIntent(effectiveQuery)
                 && ['found', 'ambiguous_found'].includes(String(specificResolution?.status || ''))
             ) {

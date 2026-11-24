@@ -3592,7 +3592,7 @@ serve(async (req) => {
                     && (textRequestsModality(stageOutput.text) || textRequestsHighSchool(stageOutput.text) || textRequestsPaymentDetails(stageOutput.text))
                 ) {
                     console.warn('[ai-processor] removendo pergunta legada em E5');
-                    stageOutput.text = buildE5BoletoQuestionFallback(/meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' '))));
+                    stageOutput.text = buildE5BoletoQuestionFallback(/oficialmente dando mais um passo/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' '))));
                 }
 
                 if (currentSubagent === 'E5') {
@@ -3640,14 +3640,14 @@ serve(async (req) => {
                     } else if (stageOutput.avancou || !textAsksBoletoDate(stageOutput.text)) {
                         stageOutput.avancou = false;
                         stageOutput.toolCalls = filterAdvanceToolCalls(stageOutput.toolCalls);
-                        const congratulatedBefore = /meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
+                        const congratulatedBefore = /oficialmente dando mais um passo/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
                         const generated = String(stageOutput.text || '');
                         stageOutput.text = !congratulatedBefore && /meus parab[eé]ns/i.test(generated) && /boleto/i.test(generated) && /segunda/i.test(generated)
                             ? generated
                             : buildE5BoletoQuestionFallback(congratulatedBefore);
                     } else {
                         // Pergunta do boleto já veio; garante os parabéns canônicos na primeira vez.
-                        const congratulatedBefore = /meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
+                        const congratulatedBefore = /oficialmente dando mais um passo/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
                         const generated = String(stageOutput.text || '');
                         if (!congratulatedBefore && !/meus parab[eé]ns/i.test(generated)) {
                             stageOutput.text = buildE5BoletoQuestionFallback(false);
@@ -4466,7 +4466,7 @@ serve(async (req) => {
             }
 
             if (finalSubagent === 'E5' && textAsksBoletoDate(String(out.text || '')) && !/meus parab[eé]ns/i.test(String(out.text || ''))) {
-                const congratulatedBefore = /meus parabens/.test(normalizeText((payload.history || [])
+                const congratulatedBefore = /oficialmente dando mais um passo/.test(normalizeText((payload.history || [])
                     .filter((h: any) => h?.role === 'assistant')
                     .map((h: any) => h?.content || '')
                     .join(' ')));
