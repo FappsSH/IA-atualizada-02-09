@@ -79,3 +79,15 @@ describe('area exata vira selecao de area', () => {
     expect(r.classificationReason).toBe('selected_catalog_area');
   });
 });
+
+describe('E3 nao repete a imagem da instituicao', () => {
+  it('bloqueia diploma/tutores premiados nos textos da apresentacao', () => {
+    const r = detectPersonalityOutputViolations({
+      stage: 'E3',
+      processAction: 'present_e3_structured_blocks',
+      courseStatus: 'confirmed_available',
+      text: 'Poder seguir os passos deles é maravilhoso, e com um diploma reconhecido internacionalmente você vai longe.\n---\nVocê terá todo o suporte de tutores premiados.',
+    } as any);
+    expect(r.personality_violations).toContain('e3_repeats_institution_image');
+  });
+});

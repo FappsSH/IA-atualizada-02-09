@@ -217,6 +217,7 @@ try {
   check(M, 'E3', 'msg 1: estágio (bacharelado de saúde tem estágio, na cidade da pessoa)', /estagio/.test(norm(e3Texts[0] + e3Texts[1])) && /cidade|desloc|polo/.test(norm(e3Texts[0] + e3Texts[1])), e3Texts);
   check(M, 'E3', 'msg 2: liga o curso ao objetivo (família)', /familia|caminho/.test(norm(e3Texts[1])), e3Texts[1]);
   check(M, 'E3', 'msg 3: pergunta "mais gostou e mais fizeram sentido"', /mais gostou/.test(norm(e3Texts[2])) && /sentido/.test(norm(e3Texts[2])), e3Texts[2]);
+  check(M, 'E3', 'textos não repetem a imagem (MEC, diploma, tradição, plataforma, tutoria) nem inventam', !/(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|tradicao|blackboard|tutor|abrir muitas portas|se destacar)/.test(norm(e3Texts.join(' '))), e3Texts);
   check(M, 'E3', 'sem bloco institucional em texto e sem metadata', !/claim_key|metadata|comunicacao comercial pode/.test(norm(t8.joined)), t8.joined);
 
   const t9 = await turn(M, lead, 'Quanto tempo de estágio tem?');
@@ -301,6 +302,7 @@ try {
   check(R5, 'decide sozinho', 'sem reação e direto ao combinado', /combinado\?/.test(norm(r5b.joined)) && !/decide sozinho|perfeito|otimo/.test(norm(r5b.joined)), r5b.joined);
   const r5c = await turn(R5, r5, 'Combinado');
   check(R5, 'combinado direto', 'vai para a E3', r5c.after.etapa_atual === 'E3', r5c.after.etapa_atual);
+  check(R5, 'E3', 'textos não repetem a imagem nem inventam', !/(premiad|\bmec\b|diploma|reconhecid|60 anos|tradicao|blackboard|tutor|abrir muitas portas|se destacar)/.test(norm(r5c.texts.join(' '))), r5c.texts);
   check(R5, 'E3', 'liga o curso ao sonho', /sonho/.test(norm(r5c.texts[1] || '')), r5c.texts);
 
   const R6 = 'recusa de indicação';

@@ -78,13 +78,12 @@ export function buildE3PresentationMessages(params: {
 
   const courseMessage = [
     `${durationSentence}${modalitySentence}`,
-    ...tutoringFacts.slice(0, 1),
     internshipSentence,
   ].filter(Boolean).join('\n\n');
 
   const motivationMessage = motivation
-    ? `E isso tem tudo a ver com o objetivo que você me contou. Essa formação é justamente o caminho para construir o que você está buscando nessa área, com uma estrutura que acompanha você do começo ao fim.`
-    : `E essa formação foi pensada para você construir sua trajetória nessa área com segurança, com uma estrutura que acompanha você do começo ao fim.`;
+    ? `E isso tem tudo a ver com o objetivo que você me contou. Essa formação é justamente o caminho para construir o que você está buscando nessa área.`
+    : `E essa formação foi pensada para você construir sua trajetória nessa área com segurança.`;
 
   const closing = firstName
     ? `De todos esses pontos que eu te apresentei ${firstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`

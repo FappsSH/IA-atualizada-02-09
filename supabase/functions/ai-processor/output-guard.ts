@@ -525,6 +525,15 @@ export function detectPersonalityOutputViolations(params: {
     violations.push('ungrounded_output:segment_unavailable_inferred_area');
   }
 
+  // Adendo 24/11: a imagem da instituição já cobre MEC, diploma, tradição, plataforma e tutoria.
+  if (
+    params.stage === 'E3'
+    && String(params.processAction || '').trim() === 'present_e3_structured_blocks'
+    && /(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|sessenta anos|tradicao|blackboard|plataforma de ensino|tutor|tutoria|abrir muitas portas|se destacar)/.test(normalized)
+  ) {
+    violations.push('e3_repeats_institution_image');
+  }
+
   // Spec PERSONALITY: não validar automaticamente com "Entendi".
   if (/^\s*entendi\b/.test(normalized)) {
     violations.push('automatic_entendi');

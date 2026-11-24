@@ -2365,6 +2365,7 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
         '- RESPONSABILIDADE ATUAL: execute integralmente a estrutura editorial definida no prompt da dashboard; ele e a unica fonte editorial da E3.',
         '- O runtime enviara primeiro a imagem fixa da instituicao. Nao crie um bloco textual institucional.',
         '- Entregue exatamente 3 mensagens de texto: (1) o curso com duracao em semestres e anos, modalidade e estagio; (2) a ligacao do curso com o objetivo/motivo real do lead; (3) a pergunta final sobre quais pontos mais gostou e mais fizeram sentido.',
+        '- A imagem da instituicao ja foi enviada: NAO fale de MEC, nota, diploma, reconhecimento, tradicao/anos, plataforma ou tutoria/tutores, e nao invente adjetivos (ex.: premiados).',
         '- Use uma linha contendo somente --- entre as 3 mensagens, totalizando 2 separadores.',
         '- FACTS e AUTHORIZED_FACTS apenas determinam o que e verdadeiro. A selecao, ordem, profundidade, tom e pergunta final pertencem exclusivamente ao prompt da dashboard.',
         '- PERSONALITY e obrigatoria na redacao: transforme fatos em conversa espontanea, entusiasta e proxima, conectada ao motivo real do lead.',

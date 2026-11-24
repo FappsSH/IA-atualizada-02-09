@@ -203,7 +203,8 @@ describe('personality output guard', () => {
     const result = detectPersonalityOutputViolations({
       stage: 'E3',
       text: 'Somos nota máxima no MEC desde quando começamos.',
-      processAction: 'present_e3_structured_blocks',
+      // Resposta a uma dúvida na E3 (a apresentação em si não repete a imagem: adendo 24/11).
+      processAction: 'handle_e3_course_followup',
       e3AuthorizedClaimKeys: ['institution_maximum_mec_since_beginning'],
     });
 
