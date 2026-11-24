@@ -118,19 +118,23 @@ function replaceLeadingGreeting(text: string, greeting: string) {
 function sanitizeForbiddenCharacters(text: string, forbiddenChars: string) {
   if (!forbiddenChars) return text;
   const source = String(text || '');
-  const preserveBulletHyphen = forbiddenChars.includes('-') && /^\s*-\s+\S+/m.test(source);
-  const sanitizedForbiddenChars = preserveBulletHyphen
-    ? Array.from(forbiddenChars).filter((char) => char !== '-').join('')
-    : forbiddenChars;
-  if (!sanitizedForbiddenChars) return source;
+  const hyphenForbidden = forbiddenChars.includes('-');
+  const preserveBulletHyphen = hyphenForbidden && /^\s*-\s+\S+/m.test(source);
+  // O hífen é tratado à parte: nunca remove o hífen dentro de palavra (segunda-feira, e-mail).
+  const sanitizedForbiddenChars = Array.from(forbiddenChars).filter((char) => char !== '-').join('');
+  let working = source;
+  if (hyphenForbidden && !preserveBulletHyphen) {
+    working = working.replace(/(?<![\p{L}\d])-+|-+(?![\p{L}\d])/gu, '');
+  }
+  if (!sanitizedForbiddenChars) return working;
   const escaped = Array.from(sanitizedForbiddenChars)
     .map((char) => char.replace(/[-\\\]^]/g, '\\$&'))
     .join('');
 
   try {
-    return source.replace(new RegExp(`[${escaped}]`, 'g'), '');
+    return working.replace(new RegExp(`[${escaped}]`, 'g'), '');
   } catch {
-    return source;
+    return working;
   }
 }
 

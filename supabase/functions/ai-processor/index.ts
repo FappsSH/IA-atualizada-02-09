@@ -1551,20 +1551,24 @@ function buildE5PaymentDeclaredFallback() {
     return 'Perfeito.\n\nAssim que essa confirmacao aparecer por aqui, eu sigo com voce sem te fazer voltar no processo.';
 }
 
-function buildE5BoletoQuestionFallback() {
-    return 'Parabens por concluir a matricula.\n\nPara o boleto de matricula, voce prefere que ele seja gerado para hoje ou para a proxima segunda-feira?';
+// Falas canônicas da E5 (spec).
+const E5_CONGRATS = 'Meus parabéns!! Agora sim, oficialmente dando mais um passo importante para começar sua graduação.';
+const E5_BOLETO_QUESTION = 'Sobre o boleto, fica melhor para você realizar o pagamento hoje ou na próxima segunda-feira?';
+
+function buildE5BoletoQuestionFallback(alreadyCongratulated = false) {
+    return alreadyCongratulated ? E5_BOLETO_QUESTION : `${E5_CONGRATS}\n---\n${E5_BOLETO_QUESTION}`;
 }
 
 function buildE5BoletoTodayFallback() {
-    return 'Perfeito.\n\nEntao vamos gerar o boleto para hoje.';
+    return 'Perfeito!!';
 }
 
 function buildE5BoletoNextMondayFallback() {
-    return 'Perfeito.\n\nEntao vamos gerar o boleto para a proxima segunda-feira.';
+    return 'Perfeito!!';
 }
 
-function buildE5BoletoCustomDateFallback(label: string) {
-    return `Perfeito.\n\nEntao no dia ${label} vamos enviar o boleto para voce.`;
+function buildE5BoletoCustomDateFallback(_label: string) {
+    return 'Perfeito!! Vou deixar essa data registrada por aqui.';
 }
 
 function textAsksBoletoDate(text: string | undefined) {
@@ -1605,6 +1609,16 @@ function detectBoletoDateChoice(message: string) {
     const textual = message.match(/\b(\d{1,2})\s+de\s+([a-zç]+)\b/i);
     if (textual) {
         return { kind: 'custom', label: textual[0] };
+    }
+
+    const weekday = normalized.match(/\b(terca|quarta|quinta|sexta|sabado|domingo)(?:[\s-]*feira)?\b/);
+    if (weekday) {
+        const labels: Record<string, string> = { terca: 'terça-feira', quarta: 'quarta-feira', quinta: 'quinta-feira', sexta: 'sexta-feira', sabado: 'sábado', domingo: 'domingo' };
+        return { kind: 'custom', label: labels[weekday[1]] || weekday[0] };
+    }
+    if (/\b(amanha|depois de amanha|semana que vem|fim do mes|final do mes|dia \d{1,2})\b/.test(normalized)) {
+        const match = normalized.match(/\b(depois de amanha|amanha|semana que vem|fim do mes|final do mes|dia \d{1,2})\b/);
+        return { kind: 'custom', label: match ? match[0] : message.trim() };
     }
 
     return null;
@@ -3578,7 +3592,7 @@ serve(async (req) => {
                     && (textRequestsModality(stageOutput.text) || textRequestsHighSchool(stageOutput.text) || textRequestsPaymentDetails(stageOutput.text))
                 ) {
                     console.warn('[ai-processor] removendo pergunta legada em E5');
-                    stageOutput.text = buildE5BoletoQuestionFallback();
+                    stageOutput.text = buildE5BoletoQuestionFallback(/meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' '))));
                 }
 
                 if (currentSubagent === 'E5') {
@@ -3626,7 +3640,11 @@ serve(async (req) => {
                     } else if (stageOutput.avancou || !textAsksBoletoDate(stageOutput.text)) {
                         stageOutput.avancou = false;
                         stageOutput.toolCalls = filterAdvanceToolCalls(stageOutput.toolCalls);
-                        stageOutput.text = buildE5BoletoQuestionFallback();
+                        const congratulatedBefore = /meus parabens/.test(normalizeText((workingHistory || []).filter((h: any) => h?.role === 'assistant').map((h: any) => h?.content || '').join(' ')));
+                        const generated = String(stageOutput.text || '');
+                        stageOutput.text = !congratulatedBefore && /meus parab[eé]ns/i.test(generated) && /boleto/i.test(generated) && /segunda/i.test(generated)
+                            ? generated
+                            : buildE5BoletoQuestionFallback(congratulatedBefore);
                     }
                 }
 

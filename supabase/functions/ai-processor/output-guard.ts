@@ -575,7 +575,7 @@ export function detectPersonalityOutputViolations(params: {
   if (
     params.stage === 'E1'
     && String(params.processAction || '').trim() === 'complete_stage'
-    && textIncludesAny(normalized, ['indisponivel', 'indispon?vel', 'outra area', 'outra ?rea', 'outras areas', 'outras ?reas', 'outro curso', 'outros cursos'])
+    && textIncludesAny(normalized, ['indisponivel', 'indispon?vel', 'outra area', 'outra ?rea', 'outras areas', 'outras ?reas', 'outro curso', 'outros cursos', 'nao esta entre', 'outra opcao de curso', 'nao temos'])
   ) {
     violations.push('complete_stage_reopened_course_selection');
   }

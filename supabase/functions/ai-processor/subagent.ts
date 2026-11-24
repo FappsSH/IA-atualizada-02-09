@@ -1175,7 +1175,12 @@ export function buildStageContractContext(params: {
   }
   if (requestedCourse) speakableFacts.requested_course = requestedCourse;
   if (requestedArea) speakableFacts.requested_area = requestedArea;
-  if (relatedAreaCourses.length > 0) speakableFacts.related_area_courses = relatedAreaCourses;
+  if (relatedAreaCourses.length > 0) {
+    // Curso fora das opções: no máximo 5 alternativas do mesmo segmento (spec + prompt E1).
+    speakableFacts.related_area_courses = params.pendingCriterionAfter === 'alternative_course_selection'
+      ? relatedAreaCourses.slice(0, 5)
+      : relatedAreaCourses;
+  }
   if (availableCourseLines.length > 0) speakableFacts.available_course_lines = availableCourseLines;
   if (availableAreas.length > 0) speakableFacts.available_areas = availableAreas;
   if (salesContext.course_was_selected_from_offered_list === true && speakableCourseName) {

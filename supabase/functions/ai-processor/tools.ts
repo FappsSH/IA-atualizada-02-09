@@ -1390,6 +1390,8 @@ export async function tool_consultar_conhecimento(
             specificResolution = resolveStructuredSpecificCourses(effectiveQuery, structuredEntries);
             if (
                 lookupMode !== 'specific'
+                // Área escolhida pelo lead na lista de áreas: nunca vira curso específico por alias parcial.
+                && String(args.lookup_mode_hint || '').trim() !== 'browse_area'
                 && !hasBroadBrowseIntent(effectiveQuery)
                 && ['found', 'ambiguous_found'].includes(String(specificResolution?.status || ''))
             ) {
