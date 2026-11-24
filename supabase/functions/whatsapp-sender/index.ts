@@ -212,13 +212,36 @@ serve(async (req) => {
     const sentOutputParts: string[] = [];
     let lastMessageId: string | undefined;
 
-    if (send_institution_image === true) {
-      const imageResult = await evolutionSendInstitutionImage(
-        evolutionBaseUrl,
-        evolutionInstance,
-        evolutionApiKey,
-        telefone,
-      );
+    // A imagem da instituição vai uma única vez por lead e sempre antes dos textos da E3.
+    let institutionImageAlreadySent = false;
+    if (send_institution_image === true && resolvedLeadId) {
+      const { data: previousImage } = await supabase
+        .from('mensagens')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('lead_id', resolvedLeadId)
+        .eq('conteudo', '[imagem_instituicao]')
+        .limit(1);
+      institutionImageAlreadySent = Array.isArray(previousImage) && previousImage.length > 0;
+    }
+
+    if (send_institution_image === true && !institutionImageAlreadySent) {
+      let imageResult: EvolutionSendResult = { ok: false, status: 0, error: 'nao_tentado' };
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          imageResult = await evolutionSendInstitutionImage(
+            evolutionBaseUrl,
+            evolutionInstance,
+            evolutionApiKey,
+            telefone,
+          );
+        } catch (err) {
+          imageResult = { ok: false, status: 0, error: String((err as Error)?.message || err) };
+        }
+        if (imageResult.ok) break;
+        console.error(`[whatsapp-sender] imagem da instituicao falhou (tentativa ${attempt}/3): ${imageResult.error ?? imageResult.status}`);
+        if (attempt < 3) await sleep(2000 * attempt);
+      }
       resultados.push(imageResult);
       if (imageResult.messageId) lastMessageId = imageResult.messageId;
       if (imageResult.ok && resolvedLeadId && persistMessage) {
@@ -305,7 +328,7 @@ serve(async (req) => {
           iteracoes: iteracoes ?? null,
           mensagens_enviadas: resultados.filter((result) => result.ok).length,
           total_partes: partes.length,
-          institution_media_sent: send_institution_image === true && resultados[0]?.ok === true,
+          institution_media_sent: send_institution_image === true && (institutionImageAlreadySent || resultados[0]?.ok === true),
           first_error: firstError,
           validated_output: String(text || ''),
           governed_output_parts: partes,
@@ -323,7 +346,7 @@ serve(async (req) => {
         ok: resultados.length > 0 && resultados.every((result) => result.ok),
         mensagens_enviadas: resultados.filter((result) => result.ok).length,
         total_partes: partes.length,
-        institution_media_sent: send_institution_image === true && resultados[0]?.ok === true,
+        institution_media_sent: send_institution_image === true && (institutionImageAlreadySent || resultados[0]?.ok === true),
         messageId: lastMessageId,
         first_error: firstError,
         governed_text: governedText,

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 // Teste oficial de aceite da AgentHub (spec canônica + adendo de 24/11/2026).
 // Roda contra o Supabase LOCAL, num tenant isolado, com uma Evolution simulada:
 // nenhuma mensagem vai para o WhatsApp real.
@@ -20,7 +22,7 @@ const adminPhone = '+5500090900999';
 const port = Number(process.env.AGENTHUB_TEST_PORT || 18084);
 const keys = ['PERSONALITY', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7'];
 
-type Sent = { to: string; kind: 'text' | 'media'; text: string; id: string };
+type Sent = { to: string; kind: 'text' | 'media'; text: string; id: string; mediaHash?: string };
 const sent: Sent[] = [];
 const checks: Array<{ scenario: string; turn: string; check: string; pass: boolean; detail?: string }> = [];
 const transcript: Array<Record<string, unknown>> = [];
@@ -48,7 +50,7 @@ const server = createServer(async (req, res) => {
   const body = raw ? JSON.parse(raw) : {};
   const id = randomUUID();
   if (req.url?.includes('/message/sendText/')) sent.push({ to: String(body.number || ''), kind: 'text', text: String(body.text || ''), id });
-  else if (req.url?.includes('/message/sendMedia/')) sent.push({ to: String(body.number || ''), kind: 'media', text: '[imagem]', id });
+  else if (req.url?.includes('/message/sendMedia/')) sent.push({ to: String(body.number || ''), kind: 'media', text: '[imagem]', id, mediaHash: createHash('md5').update(Buffer.from(String(body.media || '').replace(/^data:[^,]*,/, ''), 'base64')).digest('hex') });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ key: { id }, status: 'PENDING' }));
 });
@@ -212,6 +214,9 @@ try {
   const e3Media = t8.out.filter((m) => m.kind === 'media').length;
   check(M, 'E3', 'avançou para E3', t8.after.etapa_atual === 'E3', t8.after.etapa_atual);
   check(M, 'E3', 'imagem da instituição enviada', e3Media === 1, e3Media);
+  check(M, 'E3', 'imagem vai antes dos textos', t8.out[0]?.kind === 'media', t8.out.map((m) => m.kind));
+  const expectedImageHash = createHash('md5').update(readFileSync(new URL('../supabase/functions/whatsapp-sender/assets/informacao-instituicao.jpeg', import.meta.url))).digest('hex');
+  check(M, 'E3', 'é a imagem oficial da instituição', t8.out.find((m) => m.kind === 'media')?.mediaHash === expectedImageHash, t8.out.find((m) => m.kind === 'media')?.mediaHash);
   check(M, 'E3', 'exatamente 3 mensagens de texto', e3Texts.length === 3, e3Texts);
   check(M, 'E3', 'msg 1: curso + semestres + anos + modalidade', /farmacia/.test(norm(e3Texts[0])) && /\d+ semestres/.test(norm(e3Texts[0])) && /\d+ anos/.test(norm(e3Texts[0])) && /ead|semipresencial/.test(norm(e3Texts[0])), e3Texts[0]);
   check(M, 'E3', 'msg 1: estágio (bacharelado de saúde tem estágio, na cidade da pessoa)', /estagio/.test(norm(e3Texts[0] + e3Texts[1])) && /cidade|desloc|polo/.test(norm(e3Texts[0] + e3Texts[1])), e3Texts);
@@ -223,6 +228,7 @@ try {
   const t9 = await turn(M, lead, 'Quanto tempo de estágio tem?');
   check(M, 'E3 dúvida', 'responde a dúvida sem reapresentar', !/mais gostou/.test(norm(t9.joined)) && t9.texts.length <= 2, t9.texts);
   check(M, 'E3 dúvida', 'continua na E3', t9.after.etapa_atual === 'E3', t9.after.etapa_atual);
+  check(M, 'E3 dúvida', 'não reenvia a imagem', t9.out.every((m) => m.kind !== 'media'), t9.out.map((m) => m.kind));
 
   const t10 = await turn(M, lead, 'Gostei muito do estágio poder ser aqui na minha cidade');
   check(M, 'E3 -> E4', 'pede nome completo', /nome completo/.test(norm(t10.joined)), t10.joined);
@@ -302,6 +308,7 @@ try {
   check(R5, 'decide sozinho', 'sem reação e direto ao combinado', /combinado\?/.test(norm(r5b.joined)) && !/decide sozinho|perfeito|otimo/.test(norm(r5b.joined)), r5b.joined);
   const r5c = await turn(R5, r5, 'Combinado');
   check(R5, 'combinado direto', 'vai para a E3', r5c.after.etapa_atual === 'E3', r5c.after.etapa_atual);
+  check(R5, 'E3', 'imagem da instituição enviada antes dos textos', r5c.out[0]?.kind === 'media' && r5c.out.filter((m) => m.kind === 'media').length === 1, r5c.out.map((m) => m.kind));
   check(R5, 'E3', 'textos não repetem a imagem nem inventam', !/(premiad|\bmec\b|diploma|reconhecid|60 anos|tradicao|blackboard|tutor|abrir muitas portas|se destacar)/.test(norm(r5c.texts.join(' '))), r5c.texts);
   check(R5, 'E3', 'liga o curso ao sonho', /sonho/.test(norm(r5c.texts[1] || '')), r5c.texts);
 
