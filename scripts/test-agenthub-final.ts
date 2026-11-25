@@ -31,7 +31,7 @@ const cleanupLeadIds = new Set<string>();
 const norm = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const questions = (t: string) => (String(t).match(/\?/g) || []).length;
 
-const FORBIDDEN_ALWAYS = /vou verificar|vou consultar|vou checar|aguarde|um momento|estou analisando|proxima etapa|proximo passo|vamos seguir|vamos avancar|para seguirmos|so para concluir|para concluir|infelizmente|nao localizei|consultei|recebi sua pergunta|estou aqui para ajudar|estou a disposicao|para te ajudar melhor|para eu entender melhor|checkpoint|administrativ|\bcst\b|tecnologo|proxima etapa|nessa etapa do|etapa do processo/;
+const FORBIDDEN_ALWAYS = /vou verificar|vou consultar|vou checar|aguarde|um momento|estou analisando|proxima etapa|proximo passo|vamos seguir|vamos avancar|para seguirmos|so para concluir|para concluir|infelizmente|nao localizei|consultei|recebi sua pergunta|estou aqui para ajudar|estou a disposicao|para te ajudar melhor|para eu entender melhor|checkpoint|administrativ|\bcst\b|tecnologo|proxima etapa|nessa etapa do|etapa do processo|pode perguntar|se tiver (mais |alguma |outras )?duvida|estou por aqui|nao esta confirmad|como mencionei/;
 const NO_ACCENT_WORDS = /\b(voce|nao|graduacao|duracao|estagio|informacoes|condicoes|matricula|atencao|proposta para voce)\b/;
 
 function check(scenario: string, turn: string, name: string, pass: boolean, detail?: unknown) {
@@ -116,6 +116,7 @@ async function turn(scenario: string, lead: string, text: string, trigger: 'what
   if (joined) {
     check(scenario, label, 'sem narração de processo / frases proibidas', !FORBIDDEN_ALWAYS.test(norm(joined)), joined.match(FORBIDDEN_ALWAYS)?.[0] || joined);
     check(scenario, label, 'texto com acentuação (sem palavras sem acento)', !NO_ACCENT_WORDS.test(String(joined).toLowerCase()), String(joined).toLowerCase().match(NO_ACCENT_WORDS)?.[0]);
+    check(scenario, label, 'nenhum "---" chega ao lead', !texts.some((t) => /(^|\n)\s*-{3,}/.test(t)), texts);
     check(scenario, label, 'sem emoji e sem travessão longo', !/[\u{1F300}-\u{1FAFF}—]/u.test(joined), joined);
     check(scenario, label, 'sem saudação repetida', !/\b(bom dia|boa tarde|boa noite)\b/.test(norm(texts.filter((t) => !/eu sou helton/i.test(t)).join(' '))), joined);
   }
@@ -226,7 +227,9 @@ try {
   check(M, 'E3', 'sem bloco institucional em texto e sem metadata', !/claim_key|metadata|comunicacao comercial pode/.test(norm(t8.joined)), t8.joined);
 
   const t9 = await turn(M, lead, 'Quanto tempo de estágio tem?');
-  check(M, 'E3 dúvida', 'responde a dúvida sem reapresentar', !/mais gostou/.test(norm(t9.joined)) && t9.texts.length <= 2, t9.texts);
+  check(M, 'E3 dúvida', 'horas de estágio: frase exata definida pelo administrador', t9.texts.length === 1 && t9.texts[0] === 'A quantidade de horas exatas eu vou solicitar pro setor acadêmico e te envio assim que receber, tudo bem?', t9.texts);
+  const t9b = await turn(M, lead, 'Tudo bem');
+  check(M, 'E3 dúvida', 'depois do "tudo bem" volta para a pergunta final da E3', t9b.texts.length === 1 && /de todos esses pontos/.test(norm(t9b.joined)) && /mais gostou/.test(norm(t9b.joined)) && t9b.after.etapa_atual === 'E3' && t9b.out.every((m) => m.kind !== 'media'), [t9b.after.etapa_atual, t9b.texts]);
   check(M, 'E3 dúvida', 'continua na E3', t9.after.etapa_atual === 'E3', t9.after.etapa_atual);
   check(M, 'E3 dúvida', 'não reenvia a imagem', t9.out.every((m) => m.kind !== 'media'), t9.out.map((m) => m.kind));
 
@@ -238,13 +241,15 @@ try {
   check(M, 'nome completo', 'fala de proposta sem compromisso', /proposta/.test(norm(t11.joined)) && /compromisso/.test(norm(t11.joined)), t11.joined);
   check(M, 'nome completo', 'alerta ao admin no formato padronizado', t11.toAdmin.some((m) => /^alerta interno: lead solicitou proposta para o curso de/i.test(m.text) && /nome completo do lead: maria silva pereira/i.test(m.text) && /motivo:/i.test(m.text)), t11.toAdmin.map((m) => m.text));
   check(M, 'nome completo', 'nenhum alerta extra ao admin', t11.toAdmin.length === 1, t11.toAdmin.map((m) => m.text));
+  check(M, 'nome completo', 'alerta traz a observação das horas de estágio', /observacao: o lead perguntou a quantidade de horas exatas do estagio/.test(norm(t11.toAdmin[0]?.text || '')), t11.toAdmin.map((m) => m.text));
   const pauseProbe = await turn(M, lead, 'E aí, já tem a proposta?');
   check(M, 'pausa', 'durante a pausa nada é enviado ao lead', pauseProbe.out.length === 0, pauseProbe.texts);
 
-  await resolveCheckpoint(M, lead, 'proposal_send', 'Proposta enviada para Maria Silva Pereira');
+  await resolveCheckpoint(M, lead, 'proposal_send', 'Proposta enviada para Maria Silva Pereira. Estágio: 400 horas');
   const t12 = await turn(M, lead, '', 'stage_handoff');
   check(M, 'retomada', 'proposta ligada ao objetivo (família) e ao decisor (marido)', /familia|caminho/.test(norm(t12.joined)) && /marido|ele/.test(norm(t12.joined)), t12.joined);
   check(M, 'retomada', 'pede retorno até o fim do dia', /fim do dia/.test(norm(t12.joined)), t12.joined);
+  check(M, 'retomada', 'repassa as 400 horas de estágio antes da pergunta final', t12.texts.some((t) => /400 horas/.test(t) && /estagio/.test(norm(t))) && !/400 horas/.test(t12.texts[t12.texts.length - 1] || ''), t12.texts);
   check(M, 'retomada', 'nenhuma frase cortada', !t12.texts.some((t) => /\b(e|de|para|com|que|eu)$/.test(norm(t).trim())), t12.texts);
 
   const t13 = await turn(M, lead, 'Quero fazer a matrícula');

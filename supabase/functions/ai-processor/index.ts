@@ -7,6 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { routeByEtapa } from './router.ts';
 import { runSubagent, validateE3PresentationBlocks } from './subagent.ts';
 import { buildE3PresentationMessages } from './e3-presentation.ts';
+import { asksInternshipHours, INTERNSHIP_HOURS_REPLY, isShortAcknowledgement } from '../_shared/academic-questions.ts';
 import { extractReferralName, looksLikeReferralPhone, referralPhoneFrom, userDeclinesReferral } from '../_shared/referral.ts';
 import { runJudgeWithPreFilter } from './judge.ts';
 import { readMessage, deleteMessage, archiveMessage } from '../_shared/pgmq.ts';
@@ -3547,7 +3548,10 @@ serve(async (req) => {
                                     `Curso: ${proposalCourse}\n\n` +
                                     `Detalhes\n` +
                                     `Cidade: ${proposalCity}\n` +
-                                    `Motivo: ${proposalMotivation}`,
+                                    `Motivo: ${proposalMotivation}` +
+                                    ((leadSnapshot?.sales_context as any)?.internship_hours_question_pending === true
+                                        ? `\n\nObservação: o lead perguntou a quantidade de horas exatas do estágio. Envie esse total junto com a confirmação da proposta (ex.: "Proposta enviada para ${proposalName}. Estágio: 400 horas").`
+                                        : ''),
                                 salesContextPatch: {
                                     proposal_full_name: proposalName,
                                     proposal_checkpoint_pending: true,
@@ -3668,6 +3672,48 @@ serve(async (req) => {
                         if (!congratulatedBefore && !/meus parab[eé]ns/i.test(generated)) {
                             stageOutput.text = buildE5BoletoQuestionFallback(false);
                         }
+                    }
+                }
+
+                // Spec (admin, 24/11): horas de estágio não estão no catálogo. A AgentHub promete buscar,
+                // o admin responde junto com a proposta e a retomada repassa ao lead.
+                if (hop === 0 && (currentSubagent === 'E3' || currentSubagent === 'E4')) {
+                    const academicCtx = await readLeadSalesContext(supabase, payload.lead_id);
+                    const proposalAlreadySent = academicCtx.proposal_checkpoint_completed === true;
+                    const knownHours = String(academicCtx.internship_hours_answer || '').trim();
+                    let academicText: string | null = null;
+                    if (asksInternshipHours(activeLastUserMessage)) {
+                        if (proposalAlreadySent && knownHours) {
+                            const courseLabel = getCourseDisplayName(String(academicCtx.course_display_name || leadSnapshot?.curso_interesse || ''));
+                            academicText = `O estágio${courseLabel ? ` de ${courseLabel}` : ''} tem ${knownHours}.`;
+                        } else {
+                            academicText = INTERNSHIP_HOURS_REPLY;
+                            leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                internship_hours_question_pending: true,
+                                internship_hours_question_text: String(activeLastUserMessage || '').slice(0, 300),
+                                e3_hours_ack_pending: currentSubagent === 'E3',
+                            });
+                        }
+                    } else if (currentSubagent === 'E3' && academicCtx.e3_hours_ack_pending === true) {
+                        leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, { e3_hours_ack_pending: false });
+                        if (isShortAcknowledgement(activeLastUserMessage)) {
+                            // Segue o fluxo normal: volta para a pergunta final da E3.
+                            const firstName = getTrustedOpeningFirstName(leadSnapshot);
+                            academicText = firstName
+                                ? `De todos esses pontos que eu te apresentei ${firstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`
+                                : 'De todos esses pontos que eu te apresentei, quais foram os que você mais gostou e que mais fizeram sentido pra você?';
+                        }
+                    }
+                    if (academicText) {
+                        if (stageOutput.avancou) {
+                            await supabase.from('leads').update({ etapa_atual: currentSubagent, updated_at: new Date().toISOString() }).eq('id', payload.lead_id);
+                        }
+                        stageOutput.avancou = false;
+                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        stageOutput.text = academicText;
+                        stageOutput.deterministicReplyUsed = false;
+                        stageOutput.responseOrigin = 'admin_defined_reply';
+                        (stageOutput as any).lockedText = academicText;
                     }
                 }
 
@@ -4333,6 +4379,7 @@ serve(async (req) => {
                     return joinAssistantTexts(collectedTexts.map((item) => item.text));
                 })(),
                 toolCalls: collectedToolCalls,
+                lockedText: (lastOutput as any)?.lockedText ?? null,
                 handoff: lastOutput?.handoff ?? false,
                 avancou: lastOutput?.avancou ?? false,
                 iterations: lastOutput?.iterations ?? 0,
@@ -4581,6 +4628,37 @@ serve(async (req) => {
                 }
             }
 
+            if ((out as any)?.lockedText) {
+                out.text = String((out as any).lockedText);
+                out.atomicMessages = null;
+                out.processAction = 'admin_defined_reply';
+            }
+
+            // Retomada da proposta: repassa as horas de estágio que o administrador enviou.
+            if (finalSubagent === 'E4' && String(out.processAction || '').trim() === 'open_post_proposal_negotiation') {
+                const { data: hoursLead } = await supabase.from('leads').select('sales_context, curso_interesse').eq('id', payload.lead_id).single();
+                const hoursCtx = (hoursLead?.sales_context || {}) as Record<string, unknown>;
+                const hours = String(hoursCtx.internship_hours_answer || '').trim();
+                if (hoursCtx.internship_hours_question_pending === true && hours) {
+                    const courseLabel = getCourseDisplayName(String(hoursCtx.course_display_name || hoursLead?.curso_interesse || ''));
+                    const hoursMessage = `E sobre a sua pergunta do estágio, o setor acadêmico me passou: ${courseLabel ? `o curso de ${courseLabel}` : 'o curso'} tem ${hours} de estágio.`;
+                    const parts = (Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0
+                        ? out.atomicMessages.map((part: unknown) => String(part || '').trim())
+                        : String(out.text || '').split(/\n\s*-{3,}\s*\n/).map((part) => part.trim())).filter(Boolean);
+                    if (parts.length === 1 && /\?\s*$/.test(parts[0])) {
+                        const paragraphs = parts[0].split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+                        if (paragraphs.length > 1) parts.splice(0, 1, paragraphs.slice(0, -1).join('\n\n'), paragraphs[paragraphs.length - 1]);
+                    }
+                    const insertAt = parts.length > 1 && /\?\s*$/.test(parts[parts.length - 1]) ? parts.length - 1 : parts.length;
+                    parts.splice(insertAt, 0, hoursMessage);
+                    out.atomicMessages = parts;
+                    out.text = parts.join('\n---\n');
+                    await mergeLeadSalesContext(supabase, payload.lead_id, { internship_hours_question_pending: false, internship_hours_delivered: true });
+                } else if (hoursCtx.internship_hours_question_pending === true) {
+                    console.warn('[ai-processor] admin nao informou as horas de estagio na confirmacao da proposta');
+                }
+            }
+
             // Rede de segurança final da E4 (spec): decidiu a matrícula -> só uma reação curta, sem pergunta e sem narrar processo.
             if (finalSubagent === 'E4' && userRequestedEnrollment(String(lastUserMessage || ''))) {
                 const { data: e4Lead } = await supabase.from('leads').select('sales_context').eq('id', payload.lead_id).single();
@@ -4614,9 +4692,13 @@ serve(async (req) => {
                 out.atomicMessages = String(out.text).split(/\n\s*---\s*\n/).map((part) => part.trim()).filter(Boolean);
             }
             if (Array.isArray(out.atomicMessages)) {
+                // "---" nunca chega ao lead: qualquer separador vira uma nova mensagem.
                 out.atomicMessages = out.atomicMessages
-                    .map((part: unknown) => String(part || '').replace(/^\s*---\s*$/gm, '').trim())
+                    .flatMap((part: unknown) => String(part || '').split(/\n?\s*-{3,}\s*\n?/))
+                    .map((part: string) => part.trim())
                     .filter(Boolean);
+            } else if (/(^|\n)\s*-{3,}\s*(\n|$)/.test(String(out.text || ''))) {
+                out.atomicMessages = String(out.text).split(/\n?\s*-{3,}\s*\n?/).map((part) => part.trim()).filter(Boolean);
             }
             const outboundParts = Array.isArray(out.atomicMessages) && out.atomicMessages.length > 0
                 ? out.atomicMessages.map((part: unknown) => String(part || '').trim()).filter(Boolean)

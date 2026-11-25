@@ -31,7 +31,7 @@ const cleanupLeadIds = new Set<string>();
 const norm = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const questions = (t: string) => (String(t).match(/\?/g) || []).length;
 
-const FORBIDDEN_ALWAYS = /vou verificar|vou consultar|vou checar|aguarde|um momento|estou analisando|proxima etapa|proximo passo|vamos seguir|vamos avancar|para seguirmos|so para concluir|para concluir|infelizmente|nao localizei|consultei|recebi sua pergunta|estou aqui para ajudar|estou a disposicao|para te ajudar melhor|para eu entender melhor|checkpoint|administrativ|\bcst\b|tecnologo|proxima etapa|nessa etapa do|etapa do processo/;
+const FORBIDDEN_ALWAYS = /vou verificar|vou consultar|vou checar|aguarde|um momento|estou analisando|proxima etapa|proximo passo|vamos seguir|vamos avancar|para seguirmos|so para concluir|para concluir|infelizmente|nao localizei|consultei|recebi sua pergunta|estou aqui para ajudar|estou a disposicao|para te ajudar melhor|para eu entender melhor|checkpoint|administrativ|\bcst\b|tecnologo|proxima etapa|nessa etapa do|etapa do processo|pode perguntar|se tiver (mais |alguma |outras )?duvida|estou por aqui|nao esta confirmad|como mencionei/;
 const NO_ACCENT_WORDS = /\b(voce|nao|graduacao|duracao|estagio|informacoes|condicoes|matricula|atencao|proposta para voce)\b/;
 
 function check(scenario: string, turn: string, name: string, pass: boolean, detail?: unknown) {
@@ -116,6 +116,7 @@ async function turn(scenario: string, lead: string, text: string, trigger: 'what
   if (joined) {
     check(scenario, label, 'sem narração de processo / frases proibidas', !FORBIDDEN_ALWAYS.test(norm(joined)), joined.match(FORBIDDEN_ALWAYS)?.[0] || joined);
     check(scenario, label, 'texto com acentuação (sem palavras sem acento)', !NO_ACCENT_WORDS.test(String(joined).toLowerCase()), String(joined).toLowerCase().match(NO_ACCENT_WORDS)?.[0]);
+    check(scenario, label, 'nenhum "---" chega ao lead', !texts.some((t) => /(^|\n)\s*-{3,}/.test(t)), texts);
     check(scenario, label, 'sem emoji e sem travessão longo', !/[\u{1F300}-\u{1FAFF}—]/u.test(joined), joined);
     check(scenario, label, 'sem saudação repetida', !/\b(bom dia|boa tarde|boa noite)\b/.test(norm(texts.filter((t) => !/eu sou helton/i.test(t)).join(' '))), joined);
   }

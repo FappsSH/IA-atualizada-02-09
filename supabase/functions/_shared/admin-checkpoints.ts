@@ -1,3 +1,4 @@
+import { extractInternshipHours } from './academic-questions.ts';
 // Controle estruturado de checkpoints administrativos por lead.
 // deno-lint-ignore-file
 // @ts-nocheck
@@ -223,6 +224,8 @@ export async function completeAdminCheckpointByReply(params: {
         e4_post_proposal_opening_pending: true,
         e4_post_proposal_opening_sent: false,
         e4_proposal_followup_scheduled: false,
+        proposal_admin_reply_text: String(params.text || '').slice(0, 1000),
+        ...(extractInternshipHours(params.text) ? { internship_hours_answer: extractInternshipHours(params.text) } : {}),
       }
     : {
         enrollment_checkpoint_completed: true,
