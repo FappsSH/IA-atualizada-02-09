@@ -31,6 +31,22 @@ export function parseAdminLeadCommand(text: string | null | undefined): { action
   return { action: match[1] === 'atender' ? 'allow' : 'ignore', phone };
 }
 
+export async function isPhoneAllowed(supabase: any, tenantId: string, phone: string): Promise<boolean> {
+  const canonical = canonicalLeadPhone(phone);
+  if (!canonical) return false;
+  const { data, error } = await supabase
+    .from('lead_allow_list')
+    .select('telefone')
+    .eq('tenant_id', tenantId)
+    .eq('telefone', canonical)
+    .maybeSingle();
+  if (error) {
+    console.error('[lead-gate] falha ao consultar lead_allow_list', error.message);
+    return false;
+  }
+  return !!data;
+}
+
 export async function isPhoneIgnored(supabase: any, tenantId: string, phone: string): Promise<boolean> {
   const canonical = canonicalLeadPhone(phone);
   if (!canonical) return false;
@@ -58,6 +74,7 @@ export async function setPhoneIgnored(params: {
   const canonical = canonicalLeadPhone(params.phone);
   if (!canonical) return { ok: false, phone: canonical };
   if (params.ignored) {
+    await params.supabase.from('lead_allow_list').delete().eq('tenant_id', params.tenantId).eq('telefone', canonical);
     const { error } = await params.supabase
       .from('lead_ignore_list')
       .upsert({
@@ -73,6 +90,11 @@ export async function setPhoneIgnored(params: {
       .delete()
       .eq('tenant_id', params.tenantId)
       .eq('telefone', canonical);
+    // "atender": libera de vez, senão a checagem de contato antigo colocaria o número de volta.
+    const { error: allowError } = await params.supabase
+      .from('lead_allow_list')
+      .upsert({ tenant_id: params.tenantId, telefone: canonical, source: params.source, note: params.note ?? null }, { onConflict: 'tenant_id,telefone' });
+    if (allowError) throw new Error(`lead_allow_list upsert: ${allowError.message}`);
     if (error) throw new Error(`lead_ignore_list delete: ${error.message}`);
   }
   return { ok: true, phone: canonical };

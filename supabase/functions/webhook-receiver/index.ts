@@ -2,7 +2,7 @@
 // deno-lint-ignore-file
 // @ts-nocheck
 import { getInboundSkipReason } from '../_shared/inbound-filter.ts';
-import { canonicalLeadPhone, checkPriorRelationship, isPhoneIgnored, parseAdminLeadCommand, setPhoneIgnored } from '../_shared/lead-gate.ts';
+import { canonicalLeadPhone, checkPriorRelationship, isPhoneAllowed, isPhoneIgnored, parseAdminLeadCommand, setPhoneIgnored } from '../_shared/lead-gate.ts';
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { sendMessage } from '../_shared/pgmq.ts';
@@ -835,7 +835,7 @@ serve(async (req) => {
             continue;
         }
         const knownLead = await findLeadByPhone(supabase, TENANT_ID, telefone).catch(() => null);
-        if (!knownLead?.id) {
+        if (!knownLead?.id && !(await isPhoneAllowed(supabase, TENANT_ID, telefone))) {
             const prior = await checkPriorRelationship({
                 baseUrl: resolveEdgeReachableUrl(runtimeConfig.evolution.baseUrl ?? ''),
                 apiKey: runtimeConfig.evolution.apiKey ?? '',

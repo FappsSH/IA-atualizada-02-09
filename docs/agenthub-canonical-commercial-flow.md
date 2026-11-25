@@ -1703,3 +1703,12 @@ E fica à vontade pra mostrar pro seu marido também. Se ele tiver qualquer dúv
 Consegue me dar um retorno até o fim do dia pra gente garantir essa oportunidade? Ou já podemos garantir essa oportunidade agora?
 
 "Já podemos garantir agora" / "pode garantir" = decisão de matrícula.
+
+LIBERAR NÚMERO ("atender") E EX-LEADS (25/11/2026)
+
+"atender <número>" enviado pelo administrador tira o número da lista de não
+atender e o libera de vez (lead_allow_list): a checagem de contato antigo não
+coloca o número de volta. "ignorar <número>" faz o contrário.
+Quem já foi lead da AgentHub antes da limpeza de 25/11 foi liberado (não é
+contato pessoal: as conversas anteriores eram da própria AgentHub).
+Contatos salvos continuam na lista de não atender, que é checada primeiro.
