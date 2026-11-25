@@ -235,6 +235,28 @@ export function detectContextualReplyKind(message: string, history: Array<{ role
   return null;
 }
 
+// Abreviações comuns que os leads usam no WhatsApp.
+const COURSE_ABBREVIATIONS: Record<string, string> = {
+  adm: 'Administração',
+  admin: 'Administração',
+  ads: 'Análise e Desenvolvimento de Sistemas',
+  rh: 'Gestão de Recursos Humanos',
+  psico: 'Psicologia',
+  'ed fisica': 'Educação Física',
+  'edu fisica': 'Educação Física',
+  'educacao fis': 'Educação Física',
+  contabeis: 'Ciências Contábeis',
+  contabilidade: 'Ciências Contábeis',
+  enf: 'Enfermagem',
+  fisio: 'Fisioterapia',
+  pedago: 'Pedagogia',
+};
+
+export function expandCourseAbbreviation(query: string): string {
+  const key = normalize(String(query || '')).replace(/\s+/g, ' ').trim();
+  return COURSE_ABBREVIATIONS[key] || query;
+}
+
 function detectSpecificCourse(message: string, history: Array<{ role?: string; content?: string }>) {
   const raw = message.trim();
   const normalized = normalize(raw);
@@ -273,7 +295,7 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   for (const pattern of patterns) {
     const match = sanitized.match(pattern);
     if (match?.[1]) {
-      return match[1].trim();
+      return expandCourseAbbreviation(match[1].trim());
     }
   }
 
@@ -530,7 +552,7 @@ export function detectCatalogIntentWithHistory(message: string, history: Array<{
     return {
       matched: true,
       mode: 'specific' as const,
-      query: specific,
+      query: expandCourseAbbreviation(specific),
       rawQuery: message,
     };
   }
@@ -548,7 +570,7 @@ export function detectCatalogIntentWithHistory(message: string, history: Array<{
     return {
       matched: true,
       mode: 'specific_or_related' as const,
-      query: message.trim(),
+      query: expandCourseAbbreviation(message.trim()),
       rawQuery: message,
     };
   }
