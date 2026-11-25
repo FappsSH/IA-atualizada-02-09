@@ -4850,7 +4850,7 @@ serve(async (req) => {
             }
 
             // E1 (spec): pergunta de valor na E1 -> "vou te passar os valores sim" + a pergunta pendente, sem números.
-            if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|custa|preco|mensalidade)\b/.test(normalizeText(String(lastUserMessage || ''))))) {
+            if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|valores|custa|preco|mensalidade)\b|\bquanto\s+(ta|esta|e|custa|fica|sai|seria|cobra|cobram)\b/.test(normalizeText(String(lastUserMessage || ''))))) {
                 const addPriceAck = (value: string) => {
                     if (/valores sim/i.test(value)) return value;
                     return value

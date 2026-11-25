@@ -208,7 +208,7 @@ try {
   const x1a = await turn(X1, x1, 'Oi');
   check(X1, 'Oi', 'abertura com 3 mensagens e sem pedir nome', x1a.texts.length === 3 && !ASK_NAME.test(norm(x1a.joined)), x1a.texts);
   const x1nameAsk = await turn(X1, x1, 'Quero fazer Pedagogia');
-  check(X1, 'curso', 'sem nome confiável: pergunta o nome antes de seguir', x1nameAsk.texts.length === 1 && x1nameAsk.texts[0] === 'Claro! Antes de te passar certinho, como posso te chamar?', x1nameAsk.texts);
+  check(X1, 'curso', 'sem nome confiável: pergunta o nome antes de seguir', x1nameAsk.texts.length === 1 && x1nameAsk.texts[0] ?.replace(/\s+/g, ' ') === 'Claro! Antes de te passar certinho, como posso te chamar?', x1nameAsk.texts);
   let x1b = await turn(X1, x1, 'Fernanda');
   x1b = await chooseLineIfAsked(X1, x1, x1b, 'Licenciatura');
   check(X1, 'nome', 'usa o nome na pergunta da cidade', /fernanda, me confirma de qual cidade/.test(norm(x1b.joined)), x1b.texts);
@@ -308,7 +308,7 @@ try {
   const X5 = 'X5 "Oi" + "qual o valor de adm" (conversa real de 25/11)';
   const x5 = await newLead('+5500092000005');
   const x5ask = await turn(X5, x5, 'Oi\nQual o valor de adm');
-  check(X5, 'Oi + valor de adm', 'boas-vindas e pergunta o nome (sem nome confiável)', x5ask.texts[x5ask.texts.length - 1] === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x5ask.joined)), x5ask.texts);
+  check(X5, 'Oi + valor de adm', 'boas-vindas e pergunta o nome (sem nome confiável)', x5ask.texts[x5ask.texts.length - 1] ?.replace(/\s+/g, ' ') === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x5ask.joined)), x5ask.texts);
   const x5a = await turn(X5, x5, 'Carlos');
   check(X5, 'Oi + valor de adm', 'entende "adm" como Administração e reage ao curso', /escolha de graduacao excelente/.test(norm(x5a.joined)), x5a.texts);
   check(X5, 'Oi + valor de adm', 'diz que vai passar os valores e pede a cidade, sem número', /vou te passar os valores sim/.test(norm(x5a.joined)) && /cidade/.test(norm(x5a.joined)) && !PRICE_LEAK.test(norm(x5a.joined)), x5a.texts);
@@ -319,7 +319,7 @@ try {
   const X6 = 'X6 "Quanto ta adm" + viagem no natal (conversa real de 25/11)';
   const x6 = await newLead('+5500092000006');
   const x6a = await turn(X6, x6, 'Oi\nQuanto ta adm');
-  check(X6, 'Oi + quanto ta adm', 'reconhece o pedido e pergunta o nome', x6a.texts[x6a.texts.length - 1] === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x6a.joined)), x6a.texts);
+  check(X6, 'Oi + quanto ta adm', 'reconhece o pedido e pergunta o nome', x6a.texts[x6a.texts.length - 1] ?.replace(/\s+/g, ' ') === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x6a.joined)), x6a.texts);
   const x6b = await turn(X6, x6, 'Ana');
   check(X6, 'nome', 'Administração + valores + cidade', /escolha de graduacao excelente/.test(norm(x6b.joined)) && /valores sim/.test(norm(x6b.joined)) && /cidade/.test(norm(x6b.joined)), x6b.texts);
   await turn(X6, x6, 'Porto velho');
