@@ -271,6 +271,7 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   if (isMediaPlaceholderMessage(raw)) return null;
 
   const patterns = [
+    /\bquanto\s+(?:t[aá]|est[aá]|[eé]|custa|fica|sai|seria|cobra(?:m)?)\s+(?:o\s+|a\s+)?(?:curso\s+de\s+|gradua[cç][aã]o\s+(?:em|de)\s+|faculdade\s+de\s+)?([\p{L}\s-]{2,}?)\s*\??$/iu,
     /\b(?:valor|valores|pre[cç]o|mensalidade|quanto custa|quanto fica)\s+(?:d[eoa]s?|para|pra)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{2,}?)\s*\??$/iu,
     /\b(?:saber|informa[cç](?:[oõ]es|[aã]o))\s+(?:mais\s+)?(?:sobre|de|do|da)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{3,})$/iu,
     /\b(?:quero|queria|gostaria de|pretendo|penso em)\s+(?:fazer|cursar|estudar)\s+([\p{L}\p{N}\s-]{3,})$/iu,
@@ -302,7 +303,10 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   for (const pattern of patterns) {
     const match = sanitized.match(pattern);
     if (match?.[1]) {
-      return expandCourseAbbreviation(match[1].trim());
+      const captured = match[1].trim();
+      // "quanto custa a mensalidade?" não tem curso.
+      if (/^(a |o )?(mensalidade|valor|valores|preco|preço|curso|faculdade|graduacao|graduação|parcela|matricula|matrícula|inscricao|inscrição)s?$/i.test(captured)) continue;
+      return expandCourseAbbreviation(captured);
     }
   }
 

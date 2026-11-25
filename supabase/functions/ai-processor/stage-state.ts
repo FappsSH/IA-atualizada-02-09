@@ -1023,6 +1023,34 @@ export function classifyInboundAgainstStageState(params: {
     };
   }
 
+  // Spec E2 vacina 1: qualquer resposta que descreva viagem/mudança/período ("só mês que vem pro natal")
+  // é resposta da vacina, nunca motivo para repetir a pergunta.
+  if (
+    pendingCriterion === 'vaccine_availability'
+    && !/\?/.test(String(latestUserMessage || ''))
+    && includesAny(normalized, [
+      'viagem', 'viajar', 'viajo', 'viajando', 'natal', 'ferias', 'fim de ano', 'final do ano', 'ano novo', 'reveillon',
+      'mes que vem', 'semana que vem', 'proximo mes', 'proxima semana', 'vou passar', 'vou pra', 'vou para', 'mudar', 'mudanca',
+      'mudando', 'janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro',
+      'dezembro', 'uns dias', 'alguns dias', 'semanas', 'carnaval', 'feriado', 'casa da', 'casa do', 'interior', 'outra cidade',
+    ])
+  ) {
+    return {
+      ...result,
+      classification: 'contextual_response',
+      classificationReason: 'resolved_pending_vaccine_1_travel_or_move',
+      matched: true,
+      statePatch: {
+        e2_availability_status: 'resolved',
+        e2_vaccine_availability_done: true,
+        e2_vaccine_availability_answer: latestUserMessage,
+        e2_availability_objection_kind: 'travel_or_move',
+        pending_criterion: 'vaccine_decider',
+      },
+    };
+  }
+
+
   if (false && pendingCriterion === 'availability_objection' && includesAny(normalized, [
     'consigo comecar normalmente',
     'consigo começar normalmente',

@@ -207,8 +207,11 @@ try {
   const x1 = await newLead('+5500092000001');
   const x1a = await turn(X1, x1, 'Oi');
   check(X1, 'Oi', 'abertura com 3 mensagens e sem pedir nome', x1a.texts.length === 3 && !ASK_NAME.test(norm(x1a.joined)), x1a.texts);
-  let x1b = await turn(X1, x1, 'Quero fazer Pedagogia');
+  const x1nameAsk = await turn(X1, x1, 'Quero fazer Pedagogia');
+  check(X1, 'curso', 'sem nome confiável: pergunta o nome antes de seguir', x1nameAsk.texts.length === 1 && x1nameAsk.texts[0] === 'Claro! Antes de te passar certinho, como posso te chamar?', x1nameAsk.texts);
+  let x1b = await turn(X1, x1, 'Fernanda');
   x1b = await chooseLineIfAsked(X1, x1, x1b, 'Licenciatura');
+  check(X1, 'nome', 'usa o nome na pergunta da cidade', /fernanda, me confirma de qual cidade/.test(norm(x1b.joined)), x1b.texts);
   check(X1, 'curso', 'pede a cidade, sem falar de modalidade/duração/preço', /cidade/.test(norm(x1b.joined)) && !/semestre|modalidade|ead|semipresencial|valor|bolsa/.test(norm(x1b.joined)), x1b.joined);
   const x1c = await turn(X1, x1, 'Ji-Paraná');
   check(X1, 'cidade', 'pergunta de motivação', /trabalha nessa area|sonho ou objetivo/.test(norm(x1c.joined)), x1c.joined);
@@ -221,7 +224,7 @@ try {
   check(X1, 'decide sozinha', 'combinado direto', /combinado\?/.test(norm(x1f.joined)) && /inscricao/.test(norm(x1f.joined)), x1f.joined);
   const x1g = await turn(X1, x1, 'Combinado');
   e3Checks(X1, x1g, { course: /pedagogia/, internship: true, motivation: /trabalh|atua|pratica|experiencia|escola|dia a dia/ });
-  check(X1, 'E3', 'sem nome confiável: pergunta sem vocativo e sem pedir nome', !ASK_NAME.test(norm(x1g.joined)), x1g.texts[2]);
+  check(X1, 'E3', 'pergunta final com o nome (Fernanda)', /apresentei fernanda/.test(norm(x1g.texts[2] || '')) && !ASK_NAME.test(norm(x1g.joined)), x1g.texts[2]);
   const x1h = await turn(X1, x1, 'Gostei da flexibilidade e do estágio');
   check(X1, 'E3 -> E4', 'pede nome completo', /nome completo/.test(norm(x1h.joined)) && x1h.after.etapa_atual === 'E4', [x1h.after.etapa_atual, x1h.joined]);
   const x1i = await turn(X1, x1, 'Fernanda Lima Costa');
@@ -279,6 +282,7 @@ try {
   check('catálogo', 'informativo', `Enfermagem no catálogo: ${enfermagemEntries.map((e: any) => e.display_name + ' [' + (e.catalog_group || '') + ']').join(', ') || 'nenhum'}`, true);
   const x3a = await turn(X3, x3, 'Oi, aqui é a Juliana, queria saber de Farmácia');
   check(X3, 'abertura', 'reage à escolha e pede a cidade, sem pedir nome', /escolha de graduacao excelente/.test(norm(x3a.joined)) && /cidade/.test(norm(x3a.joined)) && !ASK_NAME.test(norm(x3a.joined)), x3a.texts);
+  check(X3, 'abertura', 'usa o nome que ela disse (Juliana)', /juliana/.test(norm(x3a.joined)), x3a.texts);
   const x3b = await turn(X3, x3, 'Porto Velho');
   check(X3, 'cidade', 'pergunta de motivação sem pedir nome', /trabalha nessa area|sonho ou objetivo/.test(norm(x3b.joined)) && !ASK_NAME.test(norm(x3b.joined)), x3b.joined);
   const x3c = await turn(X3, x3, 'Sempre quis cuidar das pessoas');
@@ -303,13 +307,27 @@ try {
   // ── X5: conversa real de 25/11 ("Oi" + "qual o valor de adm" juntos, repetição e cidade)
   const X5 = 'X5 "Oi" + "qual o valor de adm" (conversa real de 25/11)';
   const x5 = await newLead('+5500092000005');
-  const x5a = await turn(X5, x5, 'Oi\nQual o valor de adm');
+  const x5ask = await turn(X5, x5, 'Oi\nQual o valor de adm');
+  check(X5, 'Oi + valor de adm', 'boas-vindas e pergunta o nome (sem nome confiável)', x5ask.texts[x5ask.texts.length - 1] === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x5ask.joined)), x5ask.texts);
+  const x5a = await turn(X5, x5, 'Carlos');
   check(X5, 'Oi + valor de adm', 'entende "adm" como Administração e reage ao curso', /escolha de graduacao excelente/.test(norm(x5a.joined)), x5a.texts);
   check(X5, 'Oi + valor de adm', 'diz que vai passar os valores e pede a cidade, sem número', /vou te passar os valores sim/.test(norm(x5a.joined)) && /cidade/.test(norm(x5a.joined)) && !PRICE_LEAK.test(norm(x5a.joined)), x5a.texts);
-  check(X5, 'Oi + valor de adm', 'não pergunta "No que posso te ajudar hoje?"', !/no que posso te ajudar/.test(norm(x5a.joined)), x5a.texts);
   const x5b = await turn(X5, x5, 'qual o valor de adm');
   check(X5, 'repetiu a pergunta', 'não repete a reação ao curso; reforça os valores e pede a cidade', !/escolha de graduacao excelente/.test(norm(x5b.joined)) && /valores sim/.test(norm(x5b.joined)) && /cidade/.test(norm(x5b.joined)), x5b.texts);
   const x5c = await turn(X5, x5, 'Porto velho');
+  // ── X6: conversa real de 25/11 (noite): "Quanto ta adm" e "só mês que vem pro natal"
+  const X6 = 'X6 "Quanto ta adm" + viagem no natal (conversa real de 25/11)';
+  const x6 = await newLead('+5500092000006');
+  const x6a = await turn(X6, x6, 'Oi\nQuanto ta adm');
+  check(X6, 'Oi + quanto ta adm', 'reconhece o pedido e pergunta o nome', x6a.texts[x6a.texts.length - 1] === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/no que posso te ajudar/.test(norm(x6a.joined)), x6a.texts);
+  const x6b = await turn(X6, x6, 'Ana');
+  check(X6, 'nome', 'Administração + valores + cidade', /escolha de graduacao excelente/.test(norm(x6b.joined)) && /valores sim/.test(norm(x6b.joined)) && /cidade/.test(norm(x6b.joined)), x6b.texts);
+  await turn(X6, x6, 'Porto velho');
+  const x6d = await turn(X6, x6, 'eu sempre quis fazer ela mesmo');
+  check(X6, 'motivação', 'E1 completa -> E2 com a pergunta de viagem', x6d.after.etapa_atual === 'E2' && /viagem|mudanca/.test(norm(x6d.joined)), [x6d.after.etapa_atual, x6d.texts]);
+  const x6e = await turn(X6, x6, 'só mes que vem pro natal');
+  check(X6, 'viagem no natal', 'entende a resposta: não repete a pergunta da viagem e pergunta o decisor', !/viagem mais longa ou mudanca/.test(norm(x6e.joined)) && /decidir sozinh|alguem que participa/.test(norm(x6e.joined)), x6e.texts);
+
   check(X5, 'cidade', 'aceita a cidade e faz a pergunta de motivação uma vez', /trabalha nessa area|sonho ou objetivo/.test(norm(x5c.joined)) && x5c.texts.length === 1 && x5c.after.etapa_atual === 'E1', x5c.texts);
 
   // ── G: portão do webhook (quem NÃO é lead não é atendido) — nada é enviado

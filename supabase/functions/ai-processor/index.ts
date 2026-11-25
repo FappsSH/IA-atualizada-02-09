@@ -45,7 +45,8 @@ const PHONE_LIKE = /^\+?\d{10,15}$/;
 
 
 // Spec (adendo 24/11): a AgentHub não pede o nome do lead; sem nome confiável segue sem vocativo.
-const E1_NAME_GATE_ENABLED = false;
+// Decisão do administrador (25/11): sem nome confiável, a AgentHub pergunta o nome logo no começo.
+const E1_NAME_GATE_ENABLED = true;
 
 function pendingCriterionFromProcessAction(processAction: string | null | undefined) {
     switch (String(processAction || '').trim()) {
@@ -2235,6 +2236,27 @@ serve(async (req) => {
             .select('nome, lead_person_name, lead_first_name, lead_name_confidence, lead_name_source, cidade, curso_interesse, dor_principal, valor_parcela, etapa_atual, matriculado, bloqueado, sales_context, proposta_enviada_em, pronto_matricula_em')
             .eq('id', payload.lead_id)
             .maybeSingle();
+        // Lead se apresentou ("aqui é a Juliana", "me chamo Pedro"): usa esse nome e não pergunta de novo.
+        if (payload.etapa_atual === 'E1' && String(leadSnapshot?.lead_name_confidence || '').toLowerCase() !== 'trusted') {
+            const introMatch = String(lastUserMessage || '').match(/\b(?:aqui (?:é|e) (?:o |a )?|me chamo |meu nome (?:é|e) |sou (?:o |a ))([A-ZÀ-Úa-zà-ú][\p{L}]+(?:\s+[A-ZÀ-Ú][\p{L}]+)?)/u);
+            const introName = introMatch ? resolveTrustedLeadName({ explicitName: introMatch[1] }) : null;
+            if (introName?.leadNameUsed) {
+                const { data: introUpdate } = await supabase
+                    .from('leads')
+                    .update({
+                        nome: introName.leadPersonName,
+                        lead_person_name: introName.leadPersonName,
+                        lead_first_name: introName.leadFirstName,
+                        lead_name_source: 'explicit_self_intro',
+                        lead_name_confidence: 'trusted',
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', payload.lead_id)
+                    .select('nome, lead_person_name, lead_first_name, lead_name_source, lead_name_confidence')
+                    .maybeSingle();
+                if (leadSnapshot && introUpdate) Object.assign(leadSnapshot, introUpdate);
+            }
+        }
         const salesContextBeforeInbound = { ...(leadSnapshot?.sales_context || {}) };
 
         const pendingCheckpoint = await getPendingAdminCheckpoint(supabase, payload.lead_id).catch(() => null);
@@ -2409,6 +2431,7 @@ serve(async (req) => {
                     },
                     body: JSON.stringify({
                         lead_id: payload.lead_id,
+                        tenant_id: payload.tenant_id,
                         telefone: payload.telefone,
                         text,
                         subagente_usado: 'E1',
@@ -2476,6 +2499,7 @@ serve(async (req) => {
                 },
                 body: JSON.stringify({
                     lead_id: payload.lead_id,
+                    tenant_id: payload.tenant_id,
                     telefone: payload.telefone,
                     text,
                     subagente_usado: 'E1',
@@ -4819,7 +4843,8 @@ serve(async (req) => {
 
             // E1 (spec): a pergunta da cidade sai sempre na forma canônica.
             if (finalSubagent === 'E1') {
-                const canonCity = (value: string) => value.replace(/Me confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/i, 'Me confirma de qual cidade você é, por gentileza?');
+                const cityFirstName = getTrustedOpeningFirstName(leadSnapshot);
+                const canonCity = (value: string) => /valores sim/i.test(value) ? value : value.replace(/(?:(?!Antes)\p{Lu}\p{Ll}+,\s*)?[Mm]e confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/u, cityFirstName ? `${cityFirstName}, me confirma de qual cidade você é, por gentileza?` : 'Me confirma de qual cidade você é, por gentileza?');
                 if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonCity(String(part || '')));
                 out.text = canonCity(String(out.text || ''));
             }
@@ -4829,7 +4854,7 @@ serve(async (req) => {
                 const addPriceAck = (value: string) => {
                     if (/valores sim/i.test(value)) return value;
                     return value
-                        .replace(/Me confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/i, 'Vou te passar os valores sim!! Antes, me confirma de qual cidade você é, por gentileza?')
+                        .replace(/(?:(?!Antes)\p{Lu}\p{Ll}+,\s*)?[Mm]e confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/u, 'Vou te passar os valores sim!! Antes, me confirma de qual cidade você é, por gentileza?')
                         .replace(/Me conta,?\s*você já trabalha nessa área/i, 'Vou te passar os valores sim!! Antes, me conta, você já trabalha nessa área');
                 };
                 const ensurePriceAck = (parts: string[]) => {

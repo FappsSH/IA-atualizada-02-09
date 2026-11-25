@@ -287,8 +287,10 @@ try {
   const R1 = 'primeira mensagem já com curso';
   const r1 = await newLead('+5500091000101');
   const r1a = await turn(R1, r1, 'Olá, quero saber sobre Pedagogia');
-  check(R1, 'abertura', '2 mensagens de boas-vindas + reação ao curso', !r1a.texts.some((t) => /no que posso te ajudar/.test(norm(t))) && /escolha de graduacao excelente/.test(norm(r1a.joined)), r1a.texts);
-  check(R1, 'abertura', 'sem nome confiável, sem vocativo e sem pedir nome', !/como posso te chamar|seu nome/.test(norm(r1a.joined)), r1a.joined);
+  check(R1, 'abertura', '2 mensagens de boas-vindas, sem "No que posso te ajudar hoje?"', !r1a.texts.some((t) => /no que posso te ajudar/.test(norm(t))) && r1a.texts.some((t) => /eu sou helton/.test(norm(t))), r1a.texts);
+  check(R1, 'abertura', 'sem nome confiável: pergunta o nome antes de seguir (decisão 25/11)', r1a.texts[r1a.texts.length - 1] === 'Claro! Antes de te passar certinho, como posso te chamar?' && !/cidade/.test(norm(r1a.joined)), r1a.texts);
+  const r1b = await turn(R1, r1, 'Camila');
+  check(R1, 'nome', 'retoma o pedido: reage ao curso e pede a cidade com o nome', /escolha de graduacao excelente/.test(norm(r1b.joined)) && /camila, me confirma de qual cidade/.test(norm(r1b.joined)), r1b.texts);
 
   const R2 = 'pedido amplo e área';
   const r2 = await newLead('+5500091000102', { name: 'Carla Souza' });
