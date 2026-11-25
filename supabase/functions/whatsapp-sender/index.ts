@@ -29,7 +29,7 @@ interface EvolutionSendResult {
   error?: string;
 }
 
-async function evolutionSendText(
+async function evolutionSendTextOnce(
   baseUrl: string,
   instanceName: string,
   apiKey: string,
@@ -61,6 +61,28 @@ async function evolutionSendText(
 
   const data = await res.json().catch(() => ({}));
   return { ok: true, status: res.status, messageId: data?.key?.id };
+}
+
+// Falha de rede ou erro 5xx da Evolution: tenta de novo (até 3 vezes) para a mensagem não se perder.
+async function evolutionSendText(
+  baseUrl: string,
+  instanceName: string,
+  apiKey: string,
+  telefone: string,
+  text: string,
+): Promise<EvolutionSendResult> {
+  let last: EvolutionSendResult = { ok: false, status: 0, error: 'nao_tentado' };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      last = await evolutionSendTextOnce(baseUrl, instanceName, apiKey, telefone, text);
+    } catch (err) {
+      last = { ok: false, status: 0, error: String((err as Error)?.message || err) };
+    }
+    if (last.ok || (last.status >= 400 && last.status < 500)) return last;
+    console.error(`[whatsapp-sender] envio de texto falhou (tentativa ${attempt}/3): ${last.error ?? last.status}`);
+    if (attempt < 3) await sleep(1500 * attempt);
+  }
+  return last;
 }
 
 async function evolutionSendInstitutionImage(
