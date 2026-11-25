@@ -4708,6 +4708,29 @@ serve(async (req) => {
                 }
             }
 
+            // E2 (spec): combinado com terceiro = reconhecimento canônico + vacina 3 canônica, sempre iguais.
+            if (finalSubagent === 'E2' && /combinado\?/i.test(String(out.text || '')) && /\bse nao fizer sentido\b/.test(normalizeText(String(out.text || '')))) {
+                const { data: e2Lead } = await supabase.from('leads').select('sales_context').eq('id', payload.lead_id).single();
+                const participant = String((e2Lead?.sales_context as any)?.e2_decision_participant || '').trim().toLowerCase();
+                const female = ['mãe', 'mae', 'esposa', 'namorada', 'filha', 'sócia', 'socia', 'essa pessoa'].includes(participant);
+                const ack = participant && participant !== 'self'
+                    ? `Que bacana!! E se ${female ? 'ela' : 'ele'} tiver qualquer dúvida, pode me mandar por aqui também.\n\nVai ser um prazer responder.`
+                    : null;
+                const vaccine3a = 'Se não fizer sentido e não encaixar no seu bolso o que vou te apresentar agora, você me dá um "não ficou legal pra mim" sincero e continuamos amigos, sem problemas.';
+                const vaccine3b = 'Mas se fizer sentido pra você e encaixar no seu bolso, garantimos essa oportunidade indo para a inscrição. Combinado?';
+                const parts = String(out.text || '').split(/\n\s*-{3,}\s*\n|\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+                const vaccineStart = parts.findIndex((part) => /^se n[aã]o fizer sentido/i.test(part));
+                const before = vaccineStart > 0 ? parts.slice(0, vaccineStart) : [];
+                // "Depende do valor": mantém a resposta canônica anterior ao combinado ("Perfeito!! E eu vou te passar os valores sim...").
+                const isConditionalPrice = before.some((part) => /valores sim|antes disso, quero te apresentar/i.test(part));
+                const rebuilt = isConditionalPrice
+                    // Spec "E2 — DEPENDE DO VALOR": resposta canônica e "Tudo bem assim?", sem repetir o combinado.
+                    ? ['Perfeito!! E eu vou te passar os valores sim.\n\nAntes disso, quero te apresentar como funciona o curso e a metodologia, porque assim você entende exatamente o que vai receber e também consegue tirar qualquer dúvida comigo.\n\nTudo bem assim?']
+                    : [ack || '', `${vaccine3a}\n\n${vaccine3b}`].filter(Boolean);
+                out.atomicMessages = rebuilt;
+                out.text = rebuilt.join('\n---\n');
+            }
+
             // E1: a reação ao curso ("Que escolha de graduação excelente!!") só sai uma vez por conversa.
             if (finalSubagent === 'E1') {
                 const previousAssistant = (payload.history ?? []).filter((item: any) => item?.role === 'assistant').map((item: any) => normalizeText(String(item?.content || '')));

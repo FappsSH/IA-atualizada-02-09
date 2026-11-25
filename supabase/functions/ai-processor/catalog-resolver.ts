@@ -254,7 +254,14 @@ const COURSE_ABBREVIATIONS: Record<string, string> = {
 
 export function expandCourseAbbreviation(query: string): string {
   const key = normalize(String(query || '')).replace(/\s+/g, ' ').trim();
-  return COURSE_ABBREVIATIONS[key] || query;
+  if (COURSE_ABBREVIATIONS[key]) return COURSE_ABBREVIATIONS[key];
+  // Dentro de uma frase ("valor adm", "adm ead"): troca só as abreviações inequívocas.
+  const words = key.split(' ');
+  const SAFE = new Set(['adm', 'ads', 'psico', 'fisio', 'pedago']);
+  if (words.some((word) => SAFE.has(word))) {
+    return words.map((word) => (SAFE.has(word) ? COURSE_ABBREVIATIONS[word] : word)).join(' ');
+  }
+  return query;
 }
 
 function detectSpecificCourse(message: string, history: Array<{ role?: string; content?: string }>) {

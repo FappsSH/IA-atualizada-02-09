@@ -7,6 +7,7 @@ import { queryKnowledgeBase } from './knowledge.ts';
 import { getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
 import { canonicalLeadPhone } from '../_shared/lead-gate.ts';
+import { expandCourseAbbreviation } from './catalog-resolver.ts';
 
 export interface ToolContext {
     supabase: any;
@@ -1318,7 +1319,8 @@ export async function tool_consultar_conhecimento(
     args: { tipo?: string; query?: string; lookup_mode_hint?: string | null },
 ) {
     const normalizedType = String(args.tipo || '').trim().toLowerCase();
-    const normalizedQuery = String(args.query || '').trim();
+    // Abreviações de curso (adm, ads, rh...) valem também quando a própria IA faz a busca.
+    const normalizedQuery = expandCourseAbbreviation(String(args.query || '').trim());
 
     if (normalizedType === 'course' && normalizedQuery) {
         const [{ data: leadContext }, { data: recentMessages }] = await Promise.all([
