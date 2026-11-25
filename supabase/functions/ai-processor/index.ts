@@ -7,7 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { routeByEtapa } from './router.ts';
 import { runSubagent, validateE3PresentationBlocks } from './subagent.ts';
 import { buildE3PresentationMessages } from './e3-presentation.ts';
-import { buildE4ResumeMessages } from './e4-resume.ts';
+import { buildE4ResumeMessages, buildMotivationLink } from './e4-resume.ts';
 import { asksInternshipHours, INTERNSHIP_HOURS_REPLY, isShortAcknowledgement } from '../_shared/academic-questions.ts';
 import { extractReferralName, looksLikeReferralPhone, referralPhoneFrom, userDeclinesReferral } from '../_shared/referral.ts';
 import { runJudgeWithPreFilter } from './judge.ts';
@@ -1321,6 +1321,24 @@ function buildE4FinancialFallback(course: string, city: string) {
     return `Perfeito.\n\nAgora vamos falar somente das condicoes para ${courseLabel}${cityLabel}, sem voltar para perguntas de etapas anteriores.\n\nSe voce quiser seguir, eu continuo daqui com a parte financeira e de matricula.`;
 }
 
+// Resposta de preço na E4 (substitui o texto legado "vamos falar somente das condições...").
+// Antes da proposta: pede o nome completo (fluxo oficial). Depois da proposta: acolhe a objeção,
+// lembra o objetivo e faz uma única pergunta. Nunca cita valor.
+function buildE4PriceReply(lead: any, salesContext: Record<string, unknown>) {
+    const ctx = salesContext || {};
+    if (ctx.proposal_checkpoint_completed !== true) {
+        return 'Perfeito!!\n\nAgora me confirma seu nome completo, por gentileza.';
+    }
+    const firstName = getTrustedOpeningFirstName(lead);
+    const link = buildMotivationLink(
+        String(ctx.motivacao_principal || lead?.dor_principal || ''),
+        getCourseDisplayName(String(ctx.course_display_name || lead?.curso_interesse || '')),
+    );
+    return `Entendo${firstName ? ` ${firstName}` : ''}!! Faz todo sentido olhar com calma pra isso.\n\n`
+        + `E lembra que essa proposta foi montada pensando no que você me contou, ${link}.\n\n`
+        + 'Me conta, o que pesa mais pra você agora: o valor da parcela ou o momento?';
+}
+
 function looksLikeFullName(message: string) {
     const normalized = normalizeText(message);
     if (!normalized || looksLikePhoneReply(message)) return false;
@@ -1404,6 +1422,11 @@ function userConfirmedHighSchool(message: string) {
         'terminei o ensino medio',
         'estou concluindo o ensino medio',
     ]);
+}
+
+function userExplicitlyAskedForHuman(message: string) {
+    const normalized = normalizeText(message);
+    return /(atendente|atendimento humano|falar com (um |uma )?(humano|pessoa|alguem|consultor|vendedor|atendente)|pessoa de verdade|pessoa real|e um robo|voce e robo|voce e um robo|e robo|me liga|pode me ligar|quero uma ligacao)/.test(normalized);
 }
 
 function userRequestedEnrollment(message: string) {
@@ -2884,9 +2907,9 @@ serve(async (req) => {
             );
         }
 
+        // Handoff (bloqueia a AgentHub) só quando a pessoa pede explicitamente um humano.
         const shouldForceHandoff =
-            intelligence.needs_handoff &&
-            (intelligence.intent === 'human_help' || intelligence.asked_discount === true);
+            intelligence.needs_handoff === true && userExplicitlyAskedForHuman(lastUserMessage);
 
         let out;
         let e4ProposalFollowupContext: Record<string, unknown> | null = null;
@@ -3429,10 +3452,8 @@ serve(async (req) => {
                             filterHandoffToolCalls(stageOutput.toolCalls),
                         ),
                     );
-                    stageOutput.text = buildE4FinancialFallback(
-                        String(leadSnapshot?.curso_interesse || ''),
-                        String(leadSnapshot?.cidade || ''),
-                    );
+                    stageOutput.text = buildE4PriceReply(leadSnapshot, await readLeadSalesContext(supabase, payload.lead_id));
+                    (stageOutput as any).lockedText = stageOutput.text;
                 }
 
                 if (
@@ -3443,10 +3464,18 @@ serve(async (req) => {
                     console.warn('[ai-processor] simplificando resposta redundante de E4');
                     stageOutput.avancou = false;
                     stageOutput.toolCalls = filterAdvanceToolCalls(filterKnowledgeToolCalls(stageOutput.toolCalls));
-                    stageOutput.text = buildE4FinancialFallback(
-                        String(leadSnapshot?.curso_interesse || ''),
-                        String(leadSnapshot?.cidade || ''),
-                    );
+                    stageOutput.text = buildE4PriceReply(leadSnapshot, await readLeadSalesContext(supabase, payload.lead_id));
+                    (stageOutput as any).lockedText = stageOutput.text;
+                }
+
+                if (currentSubagent === 'E4' && /\b(caro|cara|pesad[oa]|salgad[oa]|apertad[oa]|nao cabe|fora do (meu )?orcamento|nao consigo pagar)\b/.test(normalizeText(activeLastUserMessage))) {
+                    const objectionCtx = await readLeadSalesContext(supabase, payload.lead_id);
+                    if (objectionCtx.proposal_checkpoint_completed === true) {
+                        stageOutput.avancou = false;
+                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        stageOutput.text = buildE4PriceReply(leadSnapshot, objectionCtx);
+                        (stageOutput as any).lockedText = stageOutput.text;
+                    }
                 }
 
                 if (
@@ -3456,10 +3485,8 @@ serve(async (req) => {
                     console.warn('[ai-processor] removendo valor/desconto indevido em E4');
                     stageOutput.avancou = false;
                     stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                    stageOutput.text = buildE4FinancialFallback(
-                        String(leadSnapshot?.curso_interesse || ''),
-                        String(leadSnapshot?.cidade || ''),
-                    );
+                    stageOutput.text = buildE4PriceReply(leadSnapshot, await readLeadSalesContext(supabase, payload.lead_id));
+                    (stageOutput as any).lockedText = stageOutput.text;
                 }
 
                 if (currentSubagent === 'E4') {

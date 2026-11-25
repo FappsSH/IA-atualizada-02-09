@@ -18,13 +18,13 @@ import { buildE3PresentationMessages } from './e3-presentation.ts';
 export type Subagent = 'E1' | 'E2' | 'E3' | 'E4' | 'E5' | 'E6' | 'E7';
 
 const TOOLS_BY_SUBAGENT: Record<Subagent, string[]> = {
-  E1: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
-  E2: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'acionar_handoff', 'notificar_admin'],
-  E3: ['ler_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
-  E4: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
-  E5: ['ler_lead', 'registrar_matricula', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
-  E6: ['ler_lead', 'acionar_handoff', 'consultar_conhecimento'],
-  E7: ['ler_lead', 'acionar_handoff', 'consultar_conhecimento'],
+  E1: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'consultar_conhecimento', 'notificar_admin'],
+  E2: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'notificar_admin'],
+  E3: ['ler_lead', 'avancar_etapa', 'consultar_conhecimento', 'notificar_admin'],
+  E4: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'consultar_conhecimento', 'notificar_admin'],
+  E5: ['ler_lead', 'registrar_matricula', 'avancar_etapa', 'consultar_conhecimento', 'notificar_admin'],
+  E6: ['ler_lead', 'consultar_conhecimento'],
+  E7: ['ler_lead', 'consultar_conhecimento'],
 };
 
 const STAGE_FALLBACKS: Record<Subagent, string> = {

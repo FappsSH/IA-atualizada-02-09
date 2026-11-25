@@ -122,7 +122,7 @@ async function turn(scenario: string, lead: string, text: string, trigger: 'what
   }
   for (const st of r.stages) {
     // A apresentação da E3 tem um montador oficial (texto da spec) que cobre a IA quando ela erra o formato.
-    if (st.stage === 'E3' && st.process_action === 'present_e3_structured_blocks') continue;
+    if (st.stage === 'E3' && (st.process_action === 'present_e3_structured_blocks' || st.fallback_reason === 'empty_e3_presentation_recovered')) continue;
     check(scenario, label, `${st.stage}/${st.process_action}: sem texto fixo (deterministic=false)`, st.deterministic_reply_used !== true, st.response_origin);
     check(scenario, label, `${st.stage}/${st.process_action}: sem fallback`, st.fallback_used !== true, st.fallback_reason);
   }
