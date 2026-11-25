@@ -3764,6 +3764,23 @@ serve(async (req) => {
                     }
                 }
 
+                // Spec E2: sem combinado aceito não existe E3 ("vai depender do valor" = resposta canônica e fica na E2).
+                if (currentSubagent === 'E2' && stageOutput.avancou) {
+                    const e2Ctx = await readLeadSalesContext(supabase, payload.lead_id);
+                    const agreementDone = e2Ctx.e2_vaccine_agreement_done === true
+                        && String(e2Ctx.e2_commercial_agreement_status || '') !== 'conditional_price_pending_confirmation';
+                    if (!agreementDone) {
+                        await supabase.from('leads').update({ etapa_atual: 'E2', updated_at: new Date().toISOString() }).eq('id', payload.lead_id);
+                        stageOutput.avancou = false;
+                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        if (String(e2Ctx.e2_commercial_agreement_status || '') === 'conditional_price_pending_confirmation') {
+                            stageOutput.text = 'Perfeito!! E eu vou te passar os valores sim.\n\nAntes disso, quero te apresentar como funciona o curso e a metodologia, porque assim você entende exatamente o que vai receber e também consegue tirar qualquer dúvida comigo.\n\nTudo bem assim?';
+                            (stageOutput as any).lockedText = stageOutput.text;
+                        }
+                        console.warn('[ai-processor] avanço E2->E3 bloqueado: combinado ainda não aceito');
+                    }
+                }
+
                 // Spec (admin, 24/11): horas de estágio não estão no catálogo. A AgentHub promete buscar,
                 // o admin responde junto com a proposta e a retomada repassa ao lead.
                 if (hop === 0 && (currentSubagent === 'E3' || currentSubagent === 'E4')) {

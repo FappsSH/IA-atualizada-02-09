@@ -157,6 +157,26 @@ async function validateStageAdvance(ctx: ToolContext, currentStage: string, next
             };
         }
     }
+    // Spec E2: só vai para a E3 depois do combinado aceito (vacina 3). "Depende do valor" ainda não é aceite.
+    if (currentStage === 'E2' && nextStage === 'E3') {
+        const { data: e2State } = await ctx.supabase
+            .from('leads')
+            .select('sales_context')
+            .eq('id', ctx.leadId)
+            .maybeSingle();
+        const e2Ctx = (e2State?.sales_context || {}) as Record<string, unknown>;
+        const agreementDone = e2Ctx.e2_vaccine_agreement_done === true
+            && String(e2Ctx.e2_commercial_agreement_status || '') !== 'conditional_price_pending_confirmation';
+        if (!agreementDone) {
+            return {
+                ok: false,
+                blocked: true,
+                reason: 'e2_agreement_not_accepted',
+                etapa_atual: currentStage,
+                etapa_destino: nextStage,
+            };
+        }
+    }
     const pendingCheckpoint = await getPendingAdminCheckpoint(ctx.supabase, ctx.leadId);
     if (pendingCheckpoint?.id) {
         return {

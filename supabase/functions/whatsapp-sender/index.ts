@@ -226,9 +226,13 @@ serve(async (req) => {
           timeZone: runtimeConfig.businessHours?.tz || 'America/Porto_Velho',
         });
 
-    const partes = skip_governance || etapaAtual === 'E3'
+    // "---" nunca chega ao lead: qualquer separador (inclusive o que a governança insere) vira uma nova mensagem.
+    const partes = (skip_governance || etapaAtual === 'E3'
         ? [String(governedText || '').trim()].filter(Boolean)
-        : splitForWhatsappDelivery(governedText, runtimeConfig.messagePolicy);
+        : splitForWhatsappDelivery(governedText, runtimeConfig.messagePolicy))
+        .flatMap((parte: string) => String(parte || '').split(/\n?[ \t]*-{3,}[ \t]*(?:\n|$)/))
+        .map((parte: string) => parte.trim())
+        .filter(Boolean);
 
     const resultados: EvolutionSendResult[] = [];
     const sentOutputParts: string[] = [];
