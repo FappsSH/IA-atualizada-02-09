@@ -56,6 +56,11 @@ function sanitizeParagraph(paragraph: string) {
     .filter((sentence) => !/estou aqui|estou por aqui|estou [àa] disposi[cç][aã]o|fico [àa] disposi[cç][aã]o|se precisar de (mais )?alguma|se precisar de qualquer|se tiver (mais |outras |qualquer |alguma )?(d[uú]vidas?|pergunta)|pode perguntar|qualquer (coisa|d[uú]vida),? ([eé] s[oó] |me )?(chamar|chama|falar|perguntar)/i.test(sentence))
     .join(' ');
 
+  // Spec PERSONALITY: sem "para te ajudar melhor" / "para eu entender melhor" (tira só a expressão).
+  next = next
+    .replace(/\b(para|pra) (te ajudar|eu te ajudar|eu entender|entender) melhor,?\s*/gi, '')
+    .replace(/(^|[.!?]\s+)([a-zà-ú])/g, (_m, lead, ch) => `${lead}${ch.toUpperCase()}`);
+
   next = next
     .replace(/\bAREA BASICA DE INGRESSO\b/gi, '')
     .replace(/\bABI\b/gi, '')
