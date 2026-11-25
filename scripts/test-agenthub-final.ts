@@ -252,6 +252,9 @@ try {
   check(M, 'retomada', 'proposta ligada ao objetivo (família) e ao decisor (marido)', /familia|caminho/.test(norm(t12.joined)) && /marido|ele/.test(norm(t12.joined)), t12.joined);
   check(M, 'retomada', 'pede retorno até o fim do dia', /fim do dia/.test(norm(t12.joined)), t12.joined);
   check(M, 'retomada', 'repassa as 400 horas de estágio antes da pergunta final', t12.texts.some((t) => /400 horas/.test(t) && /estagio/.test(norm(t))) && !/400 horas/.test(t12.texts[t12.texts.length - 1] || ''), t12.texts);
+  check(M, 'retomada', 'texto aprovado: "Prontinho ...!! A proposta já está com você." + ligação com a família', /^prontinho/.test(norm(t12.texts[0] || '')) && /a proposta ja esta com voce/.test(norm(t12.texts[0] || '')) && /montei pensando exatamente no que voce me contou, de seguir esse caminho da sua familia/.test(norm(t12.texts[0] || '')), t12.texts);
+  check(M, 'retomada', 'texto aprovado: convite ao marido', t12.texts.includes('E fica à vontade pra mostrar pro seu marido também. Se ele tiver qualquer dúvida, pode me mandar por aqui.'), t12.texts);
+  check(M, 'retomada', 'texto aprovado: as duas perguntas finais', t12.texts[t12.texts.length - 1] === 'Consegue me dar um retorno até o fim do dia pra gente garantir essa oportunidade? Ou já podemos garantir essa oportunidade agora?', t12.texts);
   check(M, 'retomada', 'nenhuma frase cortada', !t12.texts.some((t) => /\b(e|de|para|com|que|eu)$/.test(norm(t).trim())), t12.texts);
 
   const t13 = await turn(M, lead, 'Quero fazer a matrícula');

@@ -7,6 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { routeByEtapa } from './router.ts';
 import { runSubagent, validateE3PresentationBlocks } from './subagent.ts';
 import { buildE3PresentationMessages } from './e3-presentation.ts';
+import { buildE4ResumeMessages } from './e4-resume.ts';
 import { asksInternshipHours, INTERNSHIP_HOURS_REPLY, isShortAcknowledgement } from '../_shared/academic-questions.ts';
 import { extractReferralName, looksLikeReferralPhone, referralPhoneFrom, userDeclinesReferral } from '../_shared/referral.ts';
 import { runJudgeWithPreFilter } from './judge.ts';
@@ -1417,6 +1418,17 @@ function userRequestedEnrollment(message: string) {
         'quero garantir minha vaga',
         'vamos fechar',
         'seguir para a inscricao',
+        // Resposta à pergunta da retomada: "Ou já podemos garantir essa oportunidade agora?"
+        'pode garantir',
+        'podemos garantir',
+        'garantir agora',
+        'garante agora',
+        'vamos garantir',
+        'bora garantir',
+        'quero garantir',
+        'ja podemos',
+        'pode fazer a matricula',
+        'pode seguir com a matricula',
     ]);
 }
 
@@ -4636,8 +4648,18 @@ serve(async (req) => {
 
             // Retomada da proposta: repassa as horas de estágio que o administrador enviou.
             if (finalSubagent === 'E4' && String(out.processAction || '').trim() === 'open_post_proposal_negotiation') {
-                const { data: hoursLead } = await supabase.from('leads').select('sales_context, curso_interesse').eq('id', payload.lead_id).single();
+                const { data: hoursLead } = await supabase.from('leads').select('*').eq('id', payload.lead_id).single();
                 const hoursCtx = (hoursLead?.sales_context || {}) as Record<string, unknown>;
+                // Texto aprovado pelo administrador (25/11): a retomada é sempre esta, nunca improvisada.
+                const resumeMessages = buildE4ResumeMessages({
+                    firstName: getTrustedOpeningFirstName(hoursLead),
+                    motivation: String(hoursCtx.motivacao_principal || hoursLead?.dor_principal || ''),
+                    course: getCourseDisplayName(String(hoursCtx.course_display_name || hoursLead?.curso_interesse || '')),
+                    decisionParticipant: String(hoursCtx.e2_decision_participant || '') || null,
+                });
+                out.atomicMessages = resumeMessages;
+                out.text = resumeMessages.join('\n---\n');
+                out.fallbackUsed = false;
                 const hours = String(hoursCtx.internship_hours_answer || '').trim();
                 if (hoursCtx.internship_hours_question_pending === true && hours) {
                     const courseLabel = getCourseDisplayName(String(hoursCtx.course_display_name || hoursLead?.curso_interesse || ''));

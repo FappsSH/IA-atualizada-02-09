@@ -225,6 +225,7 @@ try {
   await resolveCheckpoint(X1, x1, 'proposal_send', 'Proposta enviada para Fernanda Lima Costa');
   const x1j = await turn(X1, x1, '', 'stage_handoff');
   check(X1, 'retomada', 'liga a proposta ao objetivo (trabalho) e pede retorno até o fim do dia', /trabalh|atua|pratica|experiencia|escola|dia a dia/.test(norm(x1j.joined)) && /fim do dia/.test(norm(x1j.joined)), x1j.joined);
+  check(X1, 'retomada', 'texto aprovado sem a frase do decisor (decide sozinha)', x1j.texts.length === 2 && /^prontinho/.test(norm(x1j.texts[0] || '')) && x1j.texts[1] === 'Consegue me dar um retorno até o fim do dia pra gente garantir essa oportunidade? Ou já podemos garantir essa oportunidade agora?', x1j.texts);
   check(X1, 'retomada', 'decide sozinha: não inventa marido/esposa/família', !/marido|esposa|familia|ele |ela pode/.test(norm(x1j.joined)), x1j.joined);
   const x1k = await turn(X1, x1, 'Achei um pouco caro');
   check(X1, 'objeção', 'acolhe sem inventar valor, desconto ou condição', !PRICE_LEAK.test(norm(x1k.joined)) && !/desconto|condicao especial|consigo baixar|ultima chance|so hoje/.test(norm(x1k.joined)) && x1k.joined.length > 0, x1k.joined);
