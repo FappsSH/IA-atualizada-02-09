@@ -9,7 +9,7 @@ import { buildGovernanceTagsPrompt } from '../_shared/message-governance.ts';
 import { TOOL_SCHEMAS } from './tool-schemas.ts';
 import { TOOL_IMPL, type ToolContext } from './tools.ts';
 import { fetchKnowledgeItems, getAuthorizedKnowledgeFacts, knowledgeItemsToPrompt } from './knowledge.ts';
-import { detectCatalogIntentWithHistory, detectContextualReplyKind, isMediaPlaceholderMessage } from './catalog-resolver.ts';
+import { detectCatalogIntentWithHistory, detectContextualReplyKind, expandCourseAbbreviation, isMediaPlaceholderMessage } from './catalog-resolver.ts';
 import { classifyInboundAgainstStageState, derivePendingCriterion, getNextE1Criterion, getNextE2Criterion, looksLikeE3DoubtOrObjection } from './stage-state.ts';
 import { extractFirstName } from '../_shared/lead-name.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
@@ -2073,9 +2073,18 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   const allowFreshIntentParsing = input.trigger !== 'stage_handoff';
   const e3PostPresentationTurn = input.etapaAtual === 'E3'
     && pendingCriterionBefore === 'interest_signal';
-  const catalogIntent = !allowFreshIntentParsing || stageState.matched || e3PostPresentationTurn
+  const parsedCatalogIntent = !allowFreshIntentParsing || stageState.matched || e3PostPresentationTurn
     ? { matched: false, mode: null, query: '', rawQuery: latestUserMessage }
     : detectCatalogIntentWithHistory(latestUserMessage, history);
+  // Repetição do curso já confirmado não é pedido de novo curso (evita "não temos Administração").
+  const confirmedCourseKey = String(currentSalesContext.course_status || '').trim() === 'confirmed_available'
+    ? normalizeIntentText(String(currentSalesContext.course_display_name || input.leadSnapshot?.curso_interesse || '')).replace(/\b(bacharelado|licenciatura|tecnologo)\b/g, ' ').replace(/\s+/g, ' ').trim()
+    : '';
+  const askedCourseKey = normalizeIntentText(expandCourseAbbreviation(String(parsedCatalogIntent.query || ''))).replace(/\b(valor|valores|preco|mensalidade|curso|graduacao|de|do|da|em)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const catalogIntent = parsedCatalogIntent.matched && confirmedCourseKey && askedCourseKey
+    && (confirmedCourseKey === askedCourseKey || confirmedCourseKey.startsWith(askedCourseKey))
+    ? { matched: false, mode: null, query: '', rawQuery: latestUserMessage }
+    : parsedCatalogIntent;
   const catalogAreaSelectionIntent = input.etapaAtual === 'E1'
     && allowFreshIntentParsing
     && String(currentSalesContext.course_status || '') === 'catalog_exploration'

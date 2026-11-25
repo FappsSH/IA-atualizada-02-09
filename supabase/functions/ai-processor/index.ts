@@ -20,7 +20,7 @@ import { claimOutboundGeneration, claimReadReceipt, completeReadReceipt } from '
 import { classifyQueueJobState, isQueueTimestampStale } from '../_shared/queue-job-classifier.ts';
 import { validateOutboundText } from '../_shared/output-validator.ts';
 import { tool_avancar_etapa, tool_consultar_conhecimento, tool_registrar_indicacao, tool_registrar_matricula } from './tools.ts';
-import { detectCatalogIntentWithHistory, detectContextualReplyKind } from './catalog-resolver.ts';
+import { detectCatalogIntentWithHistory, detectContextualReplyKind, expandCourseAbbreviation } from './catalog-resolver.ts';
 import { createAdminCheckpoint, getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
 import { resolveTrustedLeadName } from '../_shared/lead-name.ts';
 import { classifyInboundAgainstStageState, derivePendingCriterion, detectLastAgentQuestionType, getE2StateSnapshot, getNextCatalogAction, getNextE2Criterion, isE1CityResolved, matchOfferedCourseSelection } from './stage-state.ts';
@@ -1424,6 +1424,50 @@ function userConfirmedHighSchool(message: string) {
     ]);
 }
 
+// Completa duração, modalidade e estágio a partir do catálogo quando o contexto do lead não tem esses dados.
+async function completeCourseFactsFromCatalog(supabase: any, tenantId: string, lead: any) {
+    if (!lead) return lead;
+    const ctx = { ...(lead.sales_context || {}) } as Record<string, unknown>;
+    const needs = !Number(ctx.duration_semesters || ctx.duracao_semestres || 0)
+        || typeof ctx.has_internship !== 'boolean'
+        || !String(ctx.modalidade_oferta || ctx.delivery_mode || lead.modalidade || '').trim();
+    const courseName = String(ctx.course_display_name || ctx.curso_base_nome || lead.curso_interesse || '').trim();
+    if (!needs || !courseName) return lead;
+    const key = normalizeText(courseName).replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim();
+    const { data: entries } = await supabase
+        .from('course_catalog_entries')
+        .select('display_name, normalized_display_name, delivery_mode, duration_semesters, duration_text, has_internship, degree_level')
+        .eq('tenant_id', tenantId)
+        .eq('active', true)
+        .ilike('normalized_display_name', `${key.split(' ')[0]}%`)
+        .limit(20);
+    const list = Array.isArray(entries) ? entries : [];
+    const wantedMode = String(ctx.modalidade_oferta || ctx.delivery_mode || lead.modalidade || '').toLowerCase();
+    const exact = list.filter((entry: any) => normalizeText(String(entry.normalized_display_name || entry.display_name || '')).replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim() === key);
+    const pool = exact.length ? exact : list.filter((entry: any) => normalizeText(String(entry.display_name || '')).startsWith(key));
+    const entry: any = pool.find((item: any) => wantedMode && String(item.delivery_mode || '').toLowerCase() === wantedMode) || pool[0];
+    if (!entry) return lead;
+    return {
+        ...lead,
+        sales_context: {
+            ...ctx,
+            duration_semesters: Number(ctx.duration_semesters || ctx.duracao_semestres || 0) || entry.duration_semesters || null,
+            duration_text: ctx.duration_text || entry.duration_text || null,
+            modalidade_oferta: ctx.modalidade_oferta || ctx.delivery_mode || lead.modalidade || entry.delivery_mode,
+            has_internship: typeof ctx.has_internship === 'boolean' ? ctx.has_internship : entry.has_internship === true,
+        },
+    };
+}
+
+function isSameAsConfirmedCourse(query: string, lead: any) {
+    const ctx = (lead?.sales_context || {}) as Record<string, unknown>;
+    if (String(ctx.course_status || '').trim() !== 'confirmed_available') return false;
+    const current = normalizeText(String(ctx.course_display_name || lead?.curso_interesse || '')).replace(/\(.*?\)/g, ' ').replace(/\b(bacharelado|licenciatura|tecnologo)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const asked = normalizeText(expandCourseAbbreviation(String(query || ''))).replace(/\b(valor|valores|preco|mensalidade|curso|graduacao|de|do|da|em)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!current || !asked) return false;
+    return current === asked || current.startsWith(asked) || asked === current.split(' ')[0];
+}
+
 function userExplicitlyAskedForHuman(message: string) {
     const normalized = normalizeText(message);
     return /(atendente|atendimento humano|falar com (um |uma )?(humano|pessoa|alguem|consultor|vendedor|atendente)|pessoa de verdade|pessoa real|e um robo|voce e robo|voce e um robo|e robo|me liga|pode me ligar|quero uma ligacao)/.test(normalized);
@@ -2507,9 +2551,15 @@ serve(async (req) => {
                 'motivation_already_answered_complaint',
             ].includes(String(stageState.classificationReason || ''));
         const effectiveExplicitCourseIntent = e1PendingCriterionResponse
+            || isSameAsConfirmedCourse(String(detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []).query || ''), leadSnapshot)
             ? false
             : (explicitCourseIntent || stageState.explicitNewIntent === true);
-        const e1SpecificCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []);
+        const rawE1SpecificCourseIntent = detectCatalogIntentWithHistory(lastUserMessage, payload.history ?? []);
+        // Lead repetiu o curso que já está confirmado ("qual o valor de adm" de novo): não é troca de curso.
+        const repeatedConfirmedCourse = isSameAsConfirmedCourse(String(rawE1SpecificCourseIntent.query || ''), leadSnapshot);
+        const e1SpecificCourseIntent = repeatedConfirmedCourse
+            ? { ...rawE1SpecificCourseIntent, matched: false }
+            : rawE1SpecificCourseIntent;
         const fallbackE1CourseQuery = payload.etapa_atual === 'E1' && pendingCriterion === 'course'
             ? extractLikelyE1CourseQuery(lastUserMessage)
             : '';
@@ -4629,7 +4679,8 @@ serve(async (req) => {
             // Rede de segurança final da E3 (adendo 24/11): a apresentação só sai no formato oficial.
             if (finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks') {
                 try {
-                    const { data: e3Lead } = await supabase.from('leads').select('*').eq('id', payload.lead_id).single();
+                    const { data: e3LeadRaw } = await supabase.from('leads').select('*').eq('id', payload.lead_id).single();
+                    const e3Lead = await completeCourseFactsFromCatalog(supabase, payload.tenant_id, e3LeadRaw);
                     const e3Ctx = (e3Lead?.sales_context || {}) as Record<string, unknown>;
                     const e3Facts = Array.isArray((out as any).speakableFacts?.e3_authorized_facts) ? (out as any).speakableFacts.e3_authorized_facts : [];
                     const currentBlocks = (Array.isArray(out.atomicMessages) && out.atomicMessages.length === 3)
@@ -4652,7 +4703,11 @@ serve(async (req) => {
                         out.fallbackUsed = true;
                         out.fallbackReason = `e3_final_safety_net:${currentValidation.violations.join(',')}`;
                     } else {
-                        out.atomicMessages = currentBlocks;
+                        // Mensagem 1 (curso: duração, modalidade, estágio) sempre pelo montador oficial, a partir do catálogo:
+                        // a IA às vezes esquece semestres/anos ou o estágio.
+                        const officialBlocks = buildE3PresentationMessages({ leadSnapshot: e3Lead, authorizedFacts: e3Facts }).messages
+                            .map((part: string) => String(part || '').trim());
+                        out.atomicMessages = [officialBlocks[0] || currentBlocks[0], currentBlocks[1], currentBlocks[2]];
                     }
                     // Pergunta final sempre na forma oficial (com o primeiro nome quando ele é confiável).
                     if (Array.isArray(out.atomicMessages) && out.atomicMessages.length === 3) {
