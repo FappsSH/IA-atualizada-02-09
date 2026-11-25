@@ -267,7 +267,9 @@ try {
   // ── X3: diz o nome na primeira mensagem
   const X3 = 'X3 lead diz o nome na 1ª mensagem';
   const x3 = await newLead('+5500092000003');
-  const x3a = await turn(X3, x3, 'Oi, aqui é a Juliana, queria saber de Enfermagem');
+  const enfermagemEntries = await checked(s.from('course_catalog_entries').select('*').eq('tenant_id', tenant).ilike('normalized_search_text', '%enfermagem%'));
+  check('catálogo', 'informativo', `Enfermagem no catálogo: ${enfermagemEntries.map((e: any) => e.display_name + ' [' + (e.catalog_group || '') + ']').join(', ') || 'nenhum'}`, true);
+  const x3a = await turn(X3, x3, 'Oi, aqui é a Juliana, queria saber de Farmácia');
   check(X3, 'abertura', 'reage à escolha e pede a cidade, sem pedir nome', /escolha de graduacao excelente/.test(norm(x3a.joined)) && /cidade/.test(norm(x3a.joined)) && !ASK_NAME.test(norm(x3a.joined)), x3a.texts);
   const x3b = await turn(X3, x3, 'Porto Velho');
   check(X3, 'cidade', 'pergunta de motivação sem pedir nome', /trabalha nessa area|sonho ou objetivo/.test(norm(x3b.joined)) && !ASK_NAME.test(norm(x3b.joined)), x3b.joined);

@@ -22,7 +22,7 @@ import { detectCatalogIntentWithHistory, detectContextualReplyKind } from './cat
 import { createAdminCheckpoint, getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
 import { resolveTrustedLeadName } from '../_shared/lead-name.ts';
 import { classifyInboundAgainstStageState, derivePendingCriterion, detectLastAgentQuestionType, getE2StateSnapshot, getNextCatalogAction, getNextE2Criterion, isE1CityResolved, matchOfferedCourseSelection } from './stage-state.ts';
-import { buildInitialE1WelcomeMessages, resolveInitialE1WelcomeMessageCount, shouldRunInitialE1Welcome } from './initial-opening.ts';
+import { buildInitialE1WelcomeMessages, getTrustedOpeningFirstName, resolveInitialE1WelcomeMessageCount, shouldRunInitialE1Welcome } from './initial-opening.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
 import {
     mentionsEarlyStageCourseDetails as mentionsEarlyStageCourseDetailsGuard,
@@ -4567,6 +4567,14 @@ serve(async (req) => {
                         out.fallbackReason = `e3_final_safety_net:${currentValidation.violations.join(',')}`;
                     } else {
                         out.atomicMessages = currentBlocks;
+                    }
+                    // Pergunta final sempre na forma oficial (com o primeiro nome quando ele é confiável).
+                    if (Array.isArray(out.atomicMessages) && out.atomicMessages.length === 3) {
+                        const trustedFirstName = getTrustedOpeningFirstName(e3Lead);
+                        out.atomicMessages[2] = trustedFirstName
+                            ? `De todos esses pontos que eu te apresentei ${trustedFirstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`
+                            : 'De todos esses pontos que eu te apresentei, quais foram os que você mais gostou e que mais fizeram sentido pra você?';
+                        out.text = out.atomicMessages.join('\n---\n');
                     }
                 } catch (e3SafetyError) {
                     console.error(`[ai-processor] falha na rede de segurança da E3: ${String(e3SafetyError)}`);
