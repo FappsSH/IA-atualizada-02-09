@@ -104,6 +104,10 @@ async function turn(scenario: string, lead: string, text: string, trigger: 'what
   const r = await callProcessor(lead, text, trigger);
   const texts = r.out.filter((m) => m.kind === 'text').map((m) => m.text);
   const joined = texts.join('\n\n');
+  // Mostra a conversa na janela enquanto o teste roda.
+  console.log(`\n[${scenario}] ${r.before?.etapa_atual ?? ''} -> ${r.after?.etapa_atual ?? ''}`);
+  console.log(`  LEAD: ${text || '(retomada automática)'}`);
+  for (const m of r.out) console.log(`  AGENTHUB: ${m.kind === 'media' ? '[imagem da instituição]' : String(m.text).replace(/\n+/g, ' / ')}`);
   transcript.push({
     scenario, lead: text || `(${trigger})`, stage_before: r.before.etapa_atual, stage_after: r.after.etapa_atual,
     pending_after: r.after.sales_context?.pending_criterion ?? null,

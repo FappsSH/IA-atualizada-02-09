@@ -1336,7 +1336,7 @@ function buildE4PriceReply(lead: any, salesContext: Record<string, unknown>) {
     );
     return `Entendo${firstName ? ` ${firstName}` : ''}!! Faz todo sentido olhar com calma pra isso.\n\n`
         + `E lembra que essa proposta foi montada pensando no que você me contou, ${link}.\n\n`
-        + 'Me conta, o que pesa mais pra você agora: o valor da parcela ou o momento?';
+        + 'Me conta, o que pesa mais pra você agora, o valor da parcela ou o momento?';
 }
 
 function looksLikeFullName(message: string) {
