@@ -5,7 +5,9 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { routeByEtapa } from './router.ts';
-import { runSubagent } from './subagent.ts';
+import { runSubagent, validateE3PresentationBlocks } from './subagent.ts';
+import { buildE3PresentationMessages } from './e3-presentation.ts';
+import { extractReferralName, looksLikeReferralPhone, referralPhoneFrom, userDeclinesReferral } from '../_shared/referral.ts';
 import { runJudgeWithPreFilter } from './judge.ts';
 import { readMessage, deleteMessage, archiveMessage } from '../_shared/pgmq.ts';
 import { startTrace } from '../_shared/tracing.ts';
@@ -370,7 +372,8 @@ function extractLikelyE1CourseQuery(message: string) {
     const cleaned = String(message || '')
         .replace(/[!?.,;:]+$/g, '')
         .replace(/^\s*(oi|ola|olá|bom dia|boa tarde|boa noite)[,\s]+/i, '')
-        .replace(/^\s*(quero saber mais sobre|quero saber sobre|queria saber sobre|tenho interesse em|quero fazer|quero cursar|quero)\s+/i, '')
+        .replace(/^.*?\b(quero saber mais sobre|quero saber sobre|queria saber mais sobre|queria saber sobre|quero saber de|queria saber de|queria saber do|queria saber da|tenho interesse em|quero fazer|queria fazer|quero cursar|queria cursar)\s+/i, '')
+        .replace(/^\s*quero\s+/i, '')
         .trim();
     const cleanedNormalized = normalizeText(cleaned);
     const words = cleanedNormalized.split(' ').filter(Boolean);
@@ -1175,6 +1178,9 @@ function buildE6PhoneFallback() {
     return 'E qual o telefone dela?';
 }
 
+// Spec: o administrador só recebe os alertas padronizados dos checkpoints (proposta e matrícula).
+const INTELLIGENCE_ADMIN_ALERTS_ENABLED = false;
+
 function buildE6InvitationText() {
     return 'Antes de encerrarmos, quero te fazer um último convite.\n\nTem alguém próximo de você que também esteja pensando em começar uma graduação e que você gostaria de indicar?';
 }
@@ -1347,8 +1353,8 @@ function e4TextFits(text: string | undefined | null, mustInclude: RegExp) {
 // Reações de referência da especificação (E1), usadas só como rede de segurança.
 function buildCanonicalMotivationReaction(motivation: string) {
     const m = normalizeText(motivation);
-    if (/(famil|mae|pai|irma|irmao|tio|tia|avo)/.test(m)) return 'Olha só, então isso já vem de família!! Muito legal você querer seguir esse caminho também.';
-    if (/(trabalh|atuo|atua|ja sou|profiss)/.test(m)) return 'Muito bom!! Então você já conhece um pouco desse universo na prática.';
+    if (/(famil|\b(mae|pai|irma|irmao|tio|tia|avo|avos)\b)/.test(m)) return 'Olha só, então isso já vem de família!! Muito legal você querer seguir esse caminho também.';
+    if (/(trabalh|atuo|atua|ja sou|profiss|auxiliar|tecnic)/.test(m)) return 'Muito bom!! Então você já conhece um pouco desse universo na prática.';
     if (/(oportunidade|proposta|surgiu|apareceu|concurso|vaga)/.test(m)) return 'Olha só, então essa graduação apareceu em uma ótima hora pra você!!';
     return 'Olha só, que bacana!! Então é algo que você já queria há bastante tempo.';
 }
@@ -1366,7 +1372,7 @@ function buildE4ProposalPauseFallback(generated?: string | null) {
 function buildE4EnrollmentPauseFallback(generated?: string | null) {
     // Pausa de matrícula é invisível: só uma reação curta, sem narrar processo.
     const normalized = normalizeText(String(generated || ''));
-    if (normalized && normalized.length <= 160 && !E4_FORBIDDEN_PAUSE_NARRATION.test(normalized) && !/\?/.test(String(generated))) {
+    if (normalized && normalized.length <= 80 && !E4_FORBIDDEN_PAUSE_NARRATION.test(normalized) && !/\?/.test(String(generated)) && !/(matricula|inscricao|informacoes|dados|documento|nome completo|vou precisar)/.test(normalized)) {
         return String(generated);
     }
     return 'Perfeito!!';
@@ -2840,7 +2846,7 @@ serve(async (req) => {
                 },
             }).catch(() => {});
 
-            if (shouldNotifyPriceAsk) {
+            if (INTELLIGENCE_ADMIN_ALERTS_ENABLED && shouldNotifyPriceAsk) {
                 await notifyAdminIfNeeded(
                     'price_early',
                     `price_early_repeat_${payload.lead_id}`,
@@ -2849,7 +2855,7 @@ serve(async (req) => {
             }
         }
 
-        if (intelligence.proposal_ready && !preProposalPriceAsk) {
+        if (INTELLIGENCE_ADMIN_ALERTS_ENABLED && intelligence.proposal_ready && !preProposalPriceAsk) {
             await notifyAdminIfNeeded(
                 'proposal_ready',
                 `proposal_ready_${payload.etapa_atual}`,
@@ -2857,7 +2863,7 @@ serve(async (req) => {
             );
         }
 
-        if (intelligence.enrollment_ready || intelligence.payment_confirmed) {
+        if (INTELLIGENCE_ADMIN_ALERTS_ENABLED && (intelligence.enrollment_ready || intelligence.payment_confirmed)) {
             await notifyAdminIfNeeded(
                 'enrollment_ready',
                 `enrollment_ready_${payload.etapa_atual}`,
@@ -3702,40 +3708,25 @@ serve(async (req) => {
                             e6_feedback_collected: true,
                             e6_recommended_service: true,
                             no_indication: false,
-                            pending_criterion: 'referral_name',
+                            pending_indication_name: null,
+                            pending_indication_phone_raw: null,
+                            pending_criterion: 'referral_invite',
                         });
                         leadSnapshot.sales_context = nextSalesContext;
                         stageOutput.avancou = false;
                         stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
                         stageOutput.text = buildE6InvitationText();
                     } else {
-                        if (userDeclinedIndication(activeLastUserMessage)) {
-                            console.warn('[ai-processor] lead sem indicacao; avancando E6->E7');
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                no_indication: true,
-                                pending_indication_name: null,
-                                pending_criterion: null,
-                                e7_closing_sent: true,
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            // Spec: recusa = "Tranquilo!!" e encerramento da E7 na mesma resposta.
-                            stageOutput.text = `${buildE6NoIndicationFallback()}\n---\n${buildE7NoIndicationClosingFallback()}`;
-                            await stopE6('sem indicacao');
-                        } else if (!String(e6Context.pending_indication_name || '').trim() && looksLikePersonNameReply(activeLastUserMessage)) {
-                            console.warn('[ai-processor] capturando nome do indicado em E6');
-                            const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
-                                pending_indication_name: activeLastUserMessage.trim(),
-                                pending_criterion: 'referral_phone',
-                            });
-                            leadSnapshot.sales_context = nextSalesContext;
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = buildE6PhoneFallback();
-                        } else if (String(e6Context.pending_indication_name || '').trim() && looksLikePhoneReply(activeLastUserMessage)) {
-                            console.warn('[ai-processor] registrando indicacao em E6 a partir do telefone informado');
-                            const indicatedName = String(e6Context.pending_indication_name || '').trim();
+                        // E6 determinística (spec): recusa -> "Tranquilo!!" + E7; sim sem nome -> pede o nome;
+                        // nome -> pede o telefone; telefone -> registra uma vez e encerra.
+                        const reply = String(activeLastUserMessage || '').trim();
+                        const storedName = extractReferralName(String(e6Context.pending_indication_name || '')) || null;
+                        const storedPhone = String(e6Context.pending_indication_phone_raw || '').trim() || null;
+                        const replyName = extractReferralName(reply);
+                        stageOutput.avancou = false;
+                        stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                        const registerIndication = async (indicatedName: string, indicatedPhone: string) => {
                             stageOutput.text = '';
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
                             try {
                                 const indicationResult = await tool_registrar_indicacao({
                                     supabase,
@@ -3744,17 +3735,17 @@ serve(async (req) => {
                                     telefone: payload.telefone,
                                     env: runtimeConfig.env,
                                 }, {
-                                    telefone_indicado: activeLastUserMessage.trim(),
+                                    telefone_indicado: indicatedPhone,
                                     nome_indicado: indicatedName,
                                 });
                                 stageOutput.toolCalls.push({
                                     name: 'registrar_indicacao',
-                                    args: { telefone_indicado: activeLastUserMessage.trim(), nome_indicado: indicatedName },
+                                    args: { telefone_indicado: indicatedPhone, nome_indicado: indicatedName },
                                     result: indicationResult,
                                 });
                                 await mergeLeadSalesContext(supabase, payload.lead_id, {
                                     pending_indication_name: null,
-                                    pending_indication_phone: activeLastUserMessage.trim(),
+                                    pending_indication_phone: indicatedPhone,
                                     referral_registered: true,
                                     last_indicated_name: indicatedName,
                                     pending_criterion: null,
@@ -3765,12 +3756,49 @@ serve(async (req) => {
                                 stageOutput.avancou = false;
                                 stageOutput.text = buildE6PhoneFallback();
                             }
+                        };
+                        if (looksLikeReferralPhone(reply)) {
+                            const phone = referralPhoneFrom(reply);
+                            const name = storedName || replyName;
+                            if (name) {
+                                await registerIndication(name, phone);
+                            } else {
+                                leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                    pending_indication_phone_raw: phone,
+                                    pending_criterion: 'referral_name',
+                                });
+                                stageOutput.text = buildE6AskIndicationNameFallback();
+                            }
+                        } else if (userDeclinesReferral(reply)) {
+                            console.warn('[ai-processor] lead sem indicacao; avancando E6->E7');
+                            leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                no_indication: true,
+                                pending_indication_name: null,
+                                pending_indication_phone_raw: null,
+                                pending_criterion: null,
+                                e7_closing_sent: true,
+                            });
+                            // Spec: recusa = "Tranquilo!!" e encerramento da E7 na mesma resposta.
+                            stageOutput.text = `${buildE6NoIndicationFallback()}\n---\n${buildE7NoIndicationClosingFallback()}`;
+                            await stopE6('sem indicacao');
+                        } else if (replyName) {
+                            if (storedPhone) {
+                                await registerIndication(replyName, storedPhone);
+                            } else {
+                                leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                    pending_indication_name: replyName,
+                                    pending_criterion: 'referral_phone',
+                                });
+                                stageOutput.text = buildE6PhoneFallback();
+                            }
+                        } else if (storedName) {
+                            stageOutput.text = buildE6PhoneFallback();
                         } else {
-                            stageOutput.avancou = false;
-                            stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
-                            stageOutput.text = String(e6Context.pending_indication_name || '').trim()
-                                ? buildE6PhoneFallback()
-                                : buildE6AskIndicationNameFallback();
+                            leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                                pending_indication_name: null,
+                                pending_criterion: 'referral_name',
+                            });
+                            stageOutput.text = buildE6AskIndicationNameFallback();
                         }
                     }
                 }
@@ -4259,11 +4287,33 @@ serve(async (req) => {
                 const courseConfirmed = String(salesCtx.course_status || '').trim() === 'confirmed_available'
                     || collectedTexts.some((entry) => entry.stage === 'E2')
                     || Boolean(String(leadSnapshot?.curso_interesse || '').trim() && leadSnapshot?.etapa_atual !== 'E1');
+                const e1CompletedThisTurn = collectedTexts.some((entry) => entry.stage === 'E2');
+                const motivationText = String(salesCtx.motivacao_principal || leadSnapshot?.dor_principal || '');
+                const motivationKind = normalizeText(motivationText);
                 for (const item of collectedTexts) {
-                    if (item.stage !== 'E1' || !courseConfirmed) continue;
+                    if (item.stage !== 'E1') continue;
                     const normalizedItem = normalizeText(String(item.text || ''));
-                    if (/(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos|outras opcoes|alternativas)/.test(normalizedItem)) {
-                        item.text = buildCanonicalMotivationReaction(String(salesCtx.motivacao_principal || leadSnapshot?.dor_principal || ''));
+                    if (courseConfirmed && /(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos|outras opcoes|alternativas)/.test(normalizedItem)) {
+                        if (e1CompletedThisTurn) {
+                            item.text = buildCanonicalMotivationReaction(motivationText);
+                        } else {
+                            const pendingNow = String(salesCtx.pending_criterion || '').trim();
+                            item.text = pendingNow === 'city'
+                                ? 'Me confirma de qual cidade você é, por gentileza?'
+                                : 'Me conta, você já trabalha nessa área ou essa graduação representa um sonho ou objetivo pessoal pra você?';
+                        }
+                        continue;
+                    }
+                    // Reação à motivação precisa bater com o que a pessoa contou (trabalho, família, sonho).
+                    if (e1CompletedThisTurn && motivationKind) {
+                        const isFamily = /(famil|\b(mae|pai|irma|irmao|tio|tia|avo|avos)\b)/.test(motivationKind);
+                        const isWork = !isFamily && /(trabalh|atuo|atua|ja sou|profiss|auxiliar|tecnic)/.test(motivationKind);
+                        const reactionFits = isFamily
+                            ? /(famil|caminho)/.test(normalizedItem)
+                            : isWork
+                                ? /(pratica|trabalh|atua|experiencia|universo|dia a dia)/.test(normalizedItem) && !/ja queria ha bastante tempo/.test(normalizedItem)
+                                : !/(na pratica|ja trabalha|universo)/.test(normalizedItem);
+                        if (!reactionFits) item.text = buildCanonicalMotivationReaction(motivationText);
                     }
                 }
             }
@@ -4487,6 +4537,52 @@ serve(async (req) => {
                 const e3Blocks = splitValidatedE3Blocks(out.text);
                 if ([3, 4].includes(e3Blocks.length)) {
                     out.atomicMessages = e3Blocks;
+                }
+            }
+
+            // Rede de segurança final da E3 (adendo 24/11): a apresentação só sai no formato oficial.
+            if (finalSubagent === 'E3' && String(out.processAction || '').trim() === 'present_e3_structured_blocks') {
+                try {
+                    const { data: e3Lead } = await supabase.from('leads').select('*').eq('id', payload.lead_id).single();
+                    const e3Ctx = (e3Lead?.sales_context || {}) as Record<string, unknown>;
+                    const e3Facts = Array.isArray((out as any).speakableFacts?.e3_authorized_facts) ? (out as any).speakableFacts.e3_authorized_facts : [];
+                    const currentBlocks = (Array.isArray(out.atomicMessages) && out.atomicMessages.length === 3)
+                        ? out.atomicMessages.map((part: unknown) => String(part || '').trim())
+                        : splitValidatedE3Blocks(String(out.text || ''));
+                    const e3Params = {
+                        courseName: String(e3Ctx.course_display_name || e3Lead?.curso_interesse || ''),
+                        modality: String(e3Ctx.modalidade_oferta || e3Ctx.delivery_mode || e3Lead?.modalidade || ''),
+                        motivation: String(e3Ctx.motivacao_principal || e3Lead?.dor_principal || ''),
+                        hasInternship: typeof e3Ctx.has_internship === 'boolean' ? e3Ctx.has_internship as boolean : null,
+                        authorizedClaimKeys: e3Facts.map((fact: any) => String(fact?.claim_key || '')).filter(Boolean),
+                    };
+                    const currentValidation = validateE3PresentationBlocks({ blocks: currentBlocks, ...e3Params });
+                    if (!currentValidation.valid) {
+                        const rebuilt = buildE3PresentationMessages({ leadSnapshot: e3Lead, authorizedFacts: e3Facts });
+                        const rebuiltBlocks = rebuilt.messages.map((part: string) => String(part || '').trim()).filter(Boolean);
+                        console.warn(`[ai-processor] E3 fora do formato (${currentValidation.violations.join(',')}); usando o montador oficial`);
+                        out.text = rebuiltBlocks.join('\n---\n');
+                        out.atomicMessages = rebuiltBlocks;
+                        out.fallbackUsed = true;
+                        out.fallbackReason = `e3_final_safety_net:${currentValidation.violations.join(',')}`;
+                    } else {
+                        out.atomicMessages = currentBlocks;
+                    }
+                } catch (e3SafetyError) {
+                    console.error(`[ai-processor] falha na rede de segurança da E3: ${String(e3SafetyError)}`);
+                }
+            }
+
+            // Rede de segurança final da E4 (spec): decidiu a matrícula -> só uma reação curta, sem pergunta e sem narrar processo.
+            if (finalSubagent === 'E4' && userRequestedEnrollment(String(lastUserMessage || ''))) {
+                const { data: e4Lead } = await supabase.from('leads').select('sales_context').eq('id', payload.lead_id).single();
+                if ((e4Lead?.sales_context as any)?.enrollment_checkpoint_pending === true) {
+                    const safePause = buildE4EnrollmentPauseFallback(out.text);
+                    if (safePause !== out.text) {
+                        console.warn('[ai-processor] pausa de matricula fora do padrao; usando reacao curta');
+                        out.text = safePause;
+                        out.atomicMessages = null;
+                    }
                 }
             }
 

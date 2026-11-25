@@ -23,7 +23,7 @@ const TOOLS_BY_SUBAGENT: Record<Subagent, string[]> = {
   E3: ['ler_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
   E4: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
   E5: ['ler_lead', 'registrar_matricula', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
-  E6: ['ler_lead', 'registrar_indicacao', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
+  E6: ['ler_lead', 'acionar_handoff', 'consultar_conhecimento'],
   E7: ['ler_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
 };
 
@@ -480,7 +480,7 @@ function extractE3MotivationAnchors(motivation: string) {
   )].slice(0, 3);
 }
 
-function validateE3PresentationBlocks(params: {
+export function validateE3PresentationBlocks(params: {
   blocks: string[];
   courseName: string;
   modality: string;
@@ -532,6 +532,14 @@ function validateE3PresentationBlocks(params: {
   if (blocks.some((block) => /(carreira de sucesso|sucesso garantido)/.test(block))) {
     violations.push('unsupported_promotional_claim');
   }
+  // Adendo 24/11: a imagem cobre a instituição; a E3 não fala de preço nem narra o próximo passo.
+  if (blocks.some((block) => /(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|anos de (historia|tradicao)|tradicao de mais|blackboard|tutor|abrir muitas portas|se destacar)/.test(block))) {
+    violations.push('repeats_institution_image');
+  }
+  if (blocks.some((block) => /(proposta|valores|valor|preco|bolsa|desconto|mensalidade|vamos seguir|vou te apresentar|proxima etapa|proximo passo)/.test(block))) {
+    violations.push('e3_talks_price_or_next_step');
+  }
+  if (question && !/de todos esses pontos/.test(question)) violations.push('non_canonical_final_question');
   return { valid: violations.length === 0, violations };
 }
 function promptFingerprint(text: string) {

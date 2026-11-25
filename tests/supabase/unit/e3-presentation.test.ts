@@ -48,7 +48,7 @@ describe('E3 structural presentation', () => {
     expect(result.messages[0]).toContain('EAD');
     expect(result.messages[0]).toContain('estágio');
     expect(result.messages[0]).toContain('cidade');
-    expect(result.messages[1]).toContain('objetivo');
+    expect(result.messages[1]).toContain('já trabalha');
     expect(result.messages[2]).toContain('Jessica');
     expect(result.messages[2]).toContain('mais gostou');
     expect(result.messages.join(' ')).not.toMatch(/\b(voce|nao|duracao|graduacao)\b/);

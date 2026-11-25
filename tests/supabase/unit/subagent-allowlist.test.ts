@@ -30,12 +30,15 @@ describe('TOOLS_BY_SUBAGENT', () => {
         expect(TOOLS_BY_SUBAGENT.E5).toContain('registrar_matricula');
     });
 
-    it('E6 has registrar_indicacao tool', () => {
-        expect(TOOLS_BY_SUBAGENT.E6).toContain('registrar_indicacao');
+    it('E6 nao deixa o modelo registrar indicacao nem avancar (fluxo deterministico)', () => {
+        expect(TOOLS_BY_SUBAGENT.E6).not.toContain('registrar_indicacao');
+        expect(TOOLS_BY_SUBAGENT.E6).not.toContain('avancar_etapa');
     });
 
     it('all subagents can advance and handoff', () => {
         for (const s of SUBAGENTS) {
+            expect(TOOLS_BY_SUBAGENT[s]).toContain('acionar_handoff');
+            if (s === 'E6') continue;
             expect(TOOLS_BY_SUBAGENT[s]).toContain('avancar_etapa');
             expect(TOOLS_BY_SUBAGENT[s]).toContain('acionar_handoff');
         }

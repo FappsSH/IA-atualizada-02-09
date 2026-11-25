@@ -107,6 +107,8 @@ function isExplicitCourseLineReply(message: string) {
 function looksLikeCityReply(message: string) {
   const normalized = normalize(message);
   if (!normalized) return false;
+  // Pergunta (preço, dúvida) nunca é cidade.
+  if (/\?/.test(String(message || '')) || /\b(quanto|valor|valores|preco|mensalidade|custa|parcela|bolsa|desconto|como funciona|qual|quais|onde|quando)\b/.test(normalized)) return false;
 
   const words = normalized.split(' ').filter(Boolean);
   if (words.length === 0 || words.length > 4) return false;
@@ -240,6 +242,8 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   if (isMediaPlaceholderMessage(raw)) return null;
 
   const patterns = [
+    /\b(?:saber|informa[cç](?:[oõ]es|[aã]o))\s+(?:mais\s+)?(?:sobre|de|do|da)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{3,})$/iu,
+    /\b(?:quero|queria|gostaria de|pretendo|penso em)\s+(?:fazer|cursar|estudar)\s+([\p{L}\p{N}\s-]{3,})$/iu,
     /\bcurso de ([\p{L}\p{N}\s-]+)$/iu,
     /\btem o curso de ([\p{L}\p{N}\s-]+)$/iu,
     /\btem ([\p{L}\p{N}\s-]{3,})$/iu,

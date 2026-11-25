@@ -68,6 +68,8 @@ function isE1CityResolvedForCurrentFlow(leadSnapshot: Record<string, unknown> | 
 function looksLikeResolvedCityReply(message: string) {
   const normalized = normalize(message);
   if (!normalized) return false;
+  // Pergunta (preço, dúvida) nunca é cidade.
+  if (/\?/.test(String(message || '')) || /\b(quanto|valor|valores|preco|mensalidade|custa|parcela|bolsa|desconto|como funciona|qual|quais|onde|quando)\b/.test(normalized)) return false;
 
   // A course request must never become a city after the catalog preflight.
   if (/\b(quero saber|saber sobre|interesse|curso|graduacao|voces tem)\b/.test(normalized)) return false;

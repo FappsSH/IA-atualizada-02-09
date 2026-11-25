@@ -81,9 +81,18 @@ export function buildE3PresentationMessages(params: {
     internshipSentence,
   ].filter(Boolean).join('\n\n');
 
-  const motivationMessage = motivation
-    ? `E isso tem tudo a ver com o objetivo que você me contou. Essa formação é justamente o caminho para construir o que você está buscando nessa área.`
-    : `E essa formação foi pensada para você construir sua trajetória nessa área com segurança.`;
+  const motivationKey = motivation.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const motivationMessage = !motivation
+    ? `E essa formação foi pensada para você construir sua trajetória nessa área com segurança.`
+    : /(famili|seguir os passos|\b(pai|mae|irma|irmao|tio|tia|avo|avos)\b)/.test(motivationKey)
+      ? `E seguir esse caminho que já faz parte da sua família é muito especial. Essa formação é justamente o que vai te dar a base para construir a sua própria história nessa área.`
+      : /(cresc|promoc|promov|cargo|empresa|carreira)/.test(motivationKey)
+        ? `E pensando no seu objetivo de crescer onde você trabalha, essa formação é justamente o que vai fortalecer sua atuação e abrir espaço para você assumir novas responsabilidades.`
+        : /(trabalh|atuo|atua|auxiliar|tecnic|ja sou|na pratica)/.test(motivationKey)
+          ? `E como você já trabalha nessa área, essa formação vem para fortalecer e aprofundar o que você já vive na prática, com a base que faltava para você ir além.`
+          : /(sonho|sempre quis|vontade|desde)/.test(motivationKey)
+            ? `E isso tem tudo a ver com esse sonho que você me contou. Essa formação é justamente o caminho para você transformar essa vontade em realidade.`
+            : `E isso tem tudo a ver com o objetivo que você me contou. Essa formação é justamente o caminho para construir o que você está buscando nessa área.`;
 
   const closing = firstName
     ? `De todos esses pontos que eu te apresentei ${firstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`
