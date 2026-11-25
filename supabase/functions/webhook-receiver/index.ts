@@ -1070,7 +1070,11 @@ serve(async (req) => {
     }
 
     if (enqueued.length > 0) {
-        await triggerEdgeFunction('debounce-worker');
+        // O debounce agora espera o lead parar de digitar; o webhook responde na hora e o worker segue em segundo plano.
+        const kick = triggerEdgeFunction('debounce-worker');
+        const runtime = (globalThis as any).EdgeRuntime;
+        if (runtime?.waitUntil) runtime.waitUntil(kick);
+        else await kick;
     }
 
     return new Response(

@@ -300,6 +300,18 @@ try {
   check(X4, 'indicação', 'registrada uma vez, com o nome', x4ind.length === 1 && /pedro/i.test(x4ind[0]?.nome_indicado || ''), x4ind);
   check(X4, 'E7', 'encerramento canônico', /prazer enorme/.test(norm(x4e.joined)) && x4e.after.etapa_atual === 'E7', [x4e.after.etapa_atual, x4e.joined]);
 
+  // ── X5: conversa real de 25/11 ("Oi" + "qual o valor de adm" juntos, repetição e cidade)
+  const X5 = 'X5 "Oi" + "qual o valor de adm" (conversa real de 25/11)';
+  const x5 = await newLead('+5500092000005');
+  const x5a = await turn(X5, x5, 'Oi\nQual o valor de adm');
+  check(X5, 'Oi + valor de adm', 'entende "adm" como Administração e reage ao curso', /escolha de graduacao excelente/.test(norm(x5a.joined)), x5a.texts);
+  check(X5, 'Oi + valor de adm', 'diz que vai passar os valores e pede a cidade, sem número', /vou te passar os valores sim/.test(norm(x5a.joined)) && /cidade/.test(norm(x5a.joined)) && !PRICE_LEAK.test(norm(x5a.joined)), x5a.texts);
+  check(X5, 'Oi + valor de adm', 'não pergunta "No que posso te ajudar hoje?"', !/no que posso te ajudar/.test(norm(x5a.joined)), x5a.texts);
+  const x5b = await turn(X5, x5, 'qual o valor de adm');
+  check(X5, 'repetiu a pergunta', 'não repete a reação ao curso; reforça os valores e pede a cidade', !/escolha de graduacao excelente/.test(norm(x5b.joined)) && /valores sim/.test(norm(x5b.joined)) && /cidade/.test(norm(x5b.joined)), x5b.texts);
+  const x5c = await turn(X5, x5, 'Porto velho');
+  check(X5, 'cidade', 'aceita a cidade e faz a pergunta de motivação uma vez', /trabalha nessa area|sonho ou objetivo/.test(norm(x5c.joined)) && x5c.texts.length === 1 && x5c.after.etapa_atual === 'E1', x5c.texts);
+
   // ── G: portão do webhook (quem NÃO é lead não é atendido) — nada é enviado
   const G = 'portão do webhook';
   const hookHeaders: Record<string, string> = { 'Content-Type': 'application/json' };

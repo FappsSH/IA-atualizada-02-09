@@ -4708,6 +4708,32 @@ serve(async (req) => {
                 }
             }
 
+            // E1: a reação ao curso ("Que escolha de graduação excelente!!") só sai uma vez por conversa.
+            if (finalSubagent === 'E1') {
+                const previousAssistant = (payload.history ?? []).filter((item: any) => item?.role === 'assistant').map((item: any) => normalizeText(String(item?.content || '')));
+                if (previousAssistant.some((content: string) => content.includes('escolha de graduacao excelente'))) {
+                    const dropReaction = (value: string) => value
+                        .split(/\n\s*\n/)
+                        .filter((paragraph) => !/escolha de graduação excelente|terá muitas oportunidades/i.test(paragraph))
+                        .join('\n\n')
+                        .trim();
+                    if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => dropReaction(String(part || ''))).filter(Boolean);
+                    out.text = dropReaction(String(out.text || ''));
+                }
+            }
+
+            // E1 (spec): pergunta de valor na E1 -> "vou te passar os valores sim" + a pergunta pendente, sem números.
+            if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|custa|preco|mensalidade)\b/.test(normalizeText(String(lastUserMessage || ''))))) {
+                const addPriceAck = (value: string) => {
+                    if (/valores sim/i.test(value)) return value;
+                    return value
+                        .replace(/Me confirma de qual cidade você é, por gentileza/, 'Vou te passar os valores sim!! Antes, me confirma de qual cidade você é, por gentileza')
+                        .replace(/Me conta, você já trabalha nessa área/, 'Vou te passar os valores sim!! Antes, me conta, você já trabalha nessa área');
+                };
+                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => addPriceAck(String(part || '')));
+                out.text = addPriceAck(String(out.text || ''));
+            }
+
             // Rede de segurança final da E4 (spec): decidiu a matrícula -> só uma reação curta, sem pergunta e sem narrar processo.
             if (finalSubagent === 'E4' && userRequestedEnrollment(String(lastUserMessage || ''))) {
                 const { data: e4Lead } = await supabase.from('leads').select('sales_context').eq('id', payload.lead_id).single();

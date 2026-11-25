@@ -11,8 +11,12 @@ import { claimWorkerLock, releaseWorkerLock } from '../_shared/processing-claims
 const Q_INBOUND = 'messages_vendas';
 const Q_AI = 'ai_processing_vendas';
 
+// Junta mensagens seguidas do mesmo lead: espera um silêncio de QUIET_MS (até MAX_WAIT_MS no total)
+// antes de mandar para a IA. Ex.: "Oi" + "Qual o valor de adm" com 2s de diferença viram uma resposta só.
 const DEBOUNCE_WINDOW_MS = 3_000;
 const REREAD_DELAY_MS = 1_500;
+const QUIET_MS = 4_000;
+const MAX_WAIT_MS = 14_000;
 const MAX_BATCH = 20;
 
 interface InboundMessage {
@@ -299,7 +303,7 @@ serve(async (_req) => {
     supabase,
     lockName,
     holderId: workerRunId,
-    ttlSeconds: 20,
+    ttlSeconds: 30,
   }).catch(() => false);
 
   if (!lockAcquired) {
@@ -339,6 +343,17 @@ serve(async (_req) => {
   const remaining = Math.max(0, DEBOUNCE_WINDOW_MS - elapsed);
   if (remaining > 0) {
     await new Promise((r) => setTimeout(r, remaining));
+  }
+
+  // Espera o lead parar de digitar: só segue depois de QUIET_MS sem mensagem nova.
+  let lastCount = [...buffer.values()].reduce((a, s) => a + s.items.length, 0);
+  while (Date.now() - startedAt < MAX_WAIT_MS) {
+    await new Promise((r) => setTimeout(r, Math.min(QUIET_MS, Math.max(0, MAX_WAIT_MS - (Date.now() - startedAt)))));
+    await drainIntoBuffer(supabase, buffer);
+    const count = [...buffer.values()].reduce((a, s) => a + s.items.length, 0);
+    if (count === lastCount) break;
+    console.log(`[debounce] +${count - lastCount} mensagem(ns) durante a espera; aguardando o lead terminar`);
+    lastCount = count;
   }
 
   const consolidated = await sendConsolidated(supabase, buffer);

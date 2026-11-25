@@ -242,6 +242,7 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   if (isMediaPlaceholderMessage(raw)) return null;
 
   const patterns = [
+    /\b(?:valor|valores|pre[cç]o|mensalidade|quanto custa|quanto fica)\s+(?:d[eoa]s?|para|pra)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{2,}?)\s*\??$/iu,
     /\b(?:saber|informa[cç](?:[oõ]es|[aã]o))\s+(?:mais\s+)?(?:sobre|de|do|da)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{3,})$/iu,
     /\b(?:quero|queria|gostaria de|pretendo|penso em)\s+(?:fazer|cursar|estudar)\s+([\p{L}\p{N}\s-]{3,})$/iu,
     /\bcurso de ([\p{L}\p{N}\s-]+)$/iu,
