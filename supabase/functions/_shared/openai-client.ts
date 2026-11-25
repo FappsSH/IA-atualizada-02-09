@@ -87,22 +87,38 @@ export async function transcribeAudio(apiKey: string, audioBlob: Blob, mimeType?
 
 export async function chatCompletions(apiKey: string, req: ChatRequest): Promise<ChatResponse> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(req),
-        });
+        let res: Response;
+        try {
+            res = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(req),
+            });
+        } catch (networkError) {
+            // Conexão caiu no meio (ex.: "peer closed connection"): tenta de novo para o lead não ficar sem resposta.
+            if (attempt < 2) {
+                console.error(`[openai] falha de conexão (tentativa ${attempt + 1}/3): ${String((networkError as Error)?.message || networkError).slice(0, 160)}`);
+                await sleep(1000 * (attempt + 1));
+                continue;
+            }
+            throw networkError;
+        }
 
         if (res.ok) {
             return res.json();
         }
 
         const body = await res.text();
-        if (res.status === 429 && attempt < 2) {
+        // 429 sem crédito (insufficient_quota) não adianta repetir.
+        if (res.status === 429 && !/insufficient_quota|credit_balance_exhausted/.test(body) && attempt < 2) {
             await sleep(Math.max(600, extractRetryDelayMs(body)));
+            continue;
+        }
+        if (res.status >= 500 && attempt < 2) {
+            await sleep(1000 * (attempt + 1));
             continue;
         }
 
