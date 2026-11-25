@@ -4800,16 +4800,39 @@ serve(async (req) => {
                 }
             }
 
+            // E1 (spec): a pergunta da cidade sai sempre na forma canônica.
+            if (finalSubagent === 'E1') {
+                const canonCity = (value: string) => value.replace(/Me confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/i, 'Me confirma de qual cidade você é, por gentileza?');
+                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonCity(String(part || '')));
+                out.text = canonCity(String(out.text || ''));
+            }
+
             // E1 (spec): pergunta de valor na E1 -> "vou te passar os valores sim" + a pergunta pendente, sem números.
             if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|custa|preco|mensalidade)\b/.test(normalizeText(String(lastUserMessage || ''))))) {
                 const addPriceAck = (value: string) => {
                     if (/valores sim/i.test(value)) return value;
                     return value
-                        .replace(/Me confirma de qual cidade você é, por gentileza/, 'Vou te passar os valores sim!! Antes, me confirma de qual cidade você é, por gentileza')
-                        .replace(/Me conta, você já trabalha nessa área/, 'Vou te passar os valores sim!! Antes, me conta, você já trabalha nessa área');
+                        .replace(/Me confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/i, 'Vou te passar os valores sim!! Antes, me confirma de qual cidade você é, por gentileza?')
+                        .replace(/Me conta,?\s*você já trabalha nessa área/i, 'Vou te passar os valores sim!! Antes, me conta, você já trabalha nessa área');
                 };
-                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => addPriceAck(String(part || '')));
-                out.text = addPriceAck(String(out.text || ''));
+                const ensurePriceAck = (parts: string[]) => {
+                    const withAck = parts.map(addPriceAck);
+                    if (withAck.some((part) => /valores sim/i.test(part))) return withAck;
+                    const idx = withAck.findIndex((part) => /cidade|trabalha nessa área|sonho ou objetivo/i.test(part));
+                    if (idx >= 0) {
+                        const paragraphs = withAck[idx].split(/\n\s*\n/);
+                        const q = paragraphs.findIndex((paragraph) => /cidade|trabalha nessa área|sonho ou objetivo/i.test(paragraph));
+                        paragraphs[q] = `Vou te passar os valores sim!! Antes, ${paragraphs[q].charAt(0).toLowerCase()}${paragraphs[q].slice(1)}`;
+                        withAck[idx] = paragraphs.join('\n\n');
+                    }
+                    return withAck;
+                };
+                if (Array.isArray(out.atomicMessages) && out.atomicMessages.length) {
+                    out.atomicMessages = ensurePriceAck(out.atomicMessages.map((part: unknown) => String(part || '')));
+                    out.text = out.atomicMessages.join('\n---\n');
+                } else {
+                    out.text = ensurePriceAck(String(out.text || '').split(/\n\s*-{3,}\s*\n/)).join('\n---\n');
+                }
             }
 
             // Rede de segurança final da E4 (spec): decidiu a matrícula -> só uma reação curta, sem pergunta e sem narrar processo.
