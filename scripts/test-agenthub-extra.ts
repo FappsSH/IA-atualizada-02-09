@@ -225,6 +225,7 @@ try {
   check(X1, 'retomada', 'decide sozinha: não inventa marido/esposa/família', !/marido|esposa|familia|ele |ela pode/.test(norm(x1j.joined)), x1j.joined);
   const x1k = await turn(X1, x1, 'Achei um pouco caro');
   check(X1, 'objeção', 'acolhe sem inventar valor, desconto ou condição', !PRICE_LEAK.test(norm(x1k.joined)) && !/desconto|condicao especial|consigo baixar|ultima chance|so hoje/.test(norm(x1k.joined)) && x1k.joined.length > 0, x1k.joined);
+  check(X1, 'objeção', 'acolhe, lembra o objetivo e faz uma pergunta só', /trabalh|atua|pratica|escola|objetivo/.test(norm(x1k.joined)) && questions(x1k.joined) === 1 && !/parte financeira|condicoes para o curso/.test(norm(x1k.joined)), x1k.joined);
   check(X1, 'objeção', 'continua na E4 e não cria matrícula', x1k.after.etapa_atual === 'E4' && x1k.toAdmin.length === 0, [x1k.after.etapa_atual, x1k.toAdmin.map((m: any) => m.text)]);
   const x1l = await turn(X1, x1, 'Vou pensar com calma e te respondo amanhã');
   check(X1, 'vai pensar', 'aceita o prazo sem pressionar', !/ultima chance|so hoje|garantir hoje|vagas limitadas|nao deixe/.test(norm(x1l.joined)) && questions(x1l.joined) <= 1 && x1l.after.etapa_atual === 'E4', x1l.joined);
