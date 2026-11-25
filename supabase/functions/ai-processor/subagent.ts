@@ -24,7 +24,7 @@ const TOOLS_BY_SUBAGENT: Record<Subagent, string[]> = {
   E4: ['ler_lead', 'atualizar_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
   E5: ['ler_lead', 'registrar_matricula', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
   E6: ['ler_lead', 'acionar_handoff', 'consultar_conhecimento'],
-  E7: ['ler_lead', 'avancar_etapa', 'acionar_handoff', 'consultar_conhecimento', 'notificar_admin'],
+  E7: ['ler_lead', 'acionar_handoff', 'consultar_conhecimento'],
 };
 
 const STAGE_FALLBACKS: Record<Subagent, string> = {

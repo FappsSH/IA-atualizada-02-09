@@ -38,7 +38,7 @@ describe('TOOLS_BY_SUBAGENT', () => {
     it('all subagents can advance and handoff', () => {
         for (const s of SUBAGENTS) {
             expect(TOOLS_BY_SUBAGENT[s]).toContain('acionar_handoff');
-            if (s === 'E6') continue;
+            if (s === 'E6' || s === 'E7') continue;
             expect(TOOLS_BY_SUBAGENT[s]).toContain('avancar_etapa');
             expect(TOOLS_BY_SUBAGENT[s]).toContain('acionar_handoff');
         }
