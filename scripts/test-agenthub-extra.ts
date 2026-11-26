@@ -342,7 +342,7 @@ try {
   const x7b = await turn(X7, x7, 'Jacó');
   check(X7, 'nome', 'Enfermagem fora do catálogo: explica e oferece até 5 alternativas reais', /enfermagem/.test(norm(x7b.joined)) && (x7b.joined.match(/^\s*[-•·]/gm) || []).length <= 5 && !/infelizmente|nao localizei|consultei/.test(norm(x7b.joined)), x7b.texts);
   const x7c = await turn(X7, x7, 'são só essas ?');
-  check(X7, 'são só essas', 'responde com cursos reais', x7c.joined.length > 0 && !/nao temos outras|nao ha outras/.test(norm(x7c.joined)), x7c.texts);
+  check(X7, 'são só essas', 'mostra OUTROS cursos reais da área, sem repetir os já oferecidos', x7c.joined.length > 0 && !/biomedicina/.test(norm(x7c.joined)) && /farmacia|nutricao|fisioterapia|radiologia|psicologia/.test(norm(x7c.joined)), x7c.texts);
   const x7d = await turn(X7, x7, 'Nutrição tá quanto');
   check(X7, 'Nutrição tá quanto', 'reconhece Nutrição (está no catálogo), diz que passa os valores e pede a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x7d.joined)) && /nutricao/.test(norm(x7d.joined) + norm(String(x7d.after?.curso_interesse || ''))) && /cidade/.test(norm(x7d.joined)), [x7d.after?.curso_interesse, x7d.texts]);
 

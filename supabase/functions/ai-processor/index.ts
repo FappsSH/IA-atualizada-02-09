@@ -23,7 +23,7 @@ import { tool_avancar_etapa, tool_consultar_conhecimento, tool_registrar_indicac
 import { detectCatalogIntentWithHistory, detectContextualReplyKind, expandCourseAbbreviation } from './catalog-resolver.ts';
 import { createAdminCheckpoint, getPendingAdminCheckpoint } from '../_shared/admin-checkpoints.ts';
 import { resolveTrustedLeadName } from '../_shared/lead-name.ts';
-import { classifyInboundAgainstStageState, derivePendingCriterion, detectLastAgentQuestionType, getE2StateSnapshot, getNextCatalogAction, getNextE2Criterion, isE1CityResolved, matchOfferedCourseSelection } from './stage-state.ts';
+import { classifyInboundAgainstStageState, derivePendingCriterion, detectLastAgentQuestionType, getE2StateSnapshot, getNextCatalogAction, getNextE2Criterion, isE1CityResolved, isExplicitMoreOptionsRequest, matchOfferedCourseSelection } from './stage-state.ts';
 import { buildInitialE1WelcomeMessages, getTrustedOpeningFirstName, resolveInitialE1WelcomeMessageCount, shouldRunInitialE1Welcome } from './initial-opening.ts';
 import { getCourseDisplayName } from '../_shared/course-display.ts';
 import {
@@ -2660,10 +2660,45 @@ serve(async (req) => {
             && ['course_selection', 'alternative_course_selection'].includes(String(pendingCriterion || ''))
         ) {
             const salesContext = { ...(leadSnapshot?.sales_context || {}) } as Record<string, unknown>;
-            const selectedCourse = matchOfferedCourseSelection(
+            let selectedCourse = matchOfferedCourseSelection(
                 lastUserMessage,
                 salesContext.related_area_courses || salesContext.area_courses || [],
             );
+            // Curso real do catálogo que não estava na lista oferecida ("Nutrição tá quanto"): também vale.
+            const catalogForSelection = await supabase
+                .from('course_catalog_entries')
+                .select('canonical_name, display_name, area_name')
+                .eq('tenant_id', payload.tenant_id)
+                .eq('active', true)
+                .limit(500);
+            const catalogRows = Array.isArray(catalogForSelection.data) ? catalogForSelection.data : [];
+            if (!selectedCourse && !isExplicitMoreOptionsRequest(lastUserMessage)) {
+                const byCanonical = new Map<string, string>();
+                for (const row of catalogRows as any[]) {
+                    const label = getCourseDisplayName(String(row.display_name || row.canonical_name || ''));
+                    if (label) byCanonical.set(String(row.canonical_name || label), label);
+                }
+                const matchedCanonical = matchOfferedCourseSelection(lastUserMessage, Array.from(byCanonical.keys()));
+                if (matchedCanonical) selectedCourse = byCanonical.get(matchedCanonical) || matchedCanonical;
+            }
+            // "São só essas?": mostra os outros cursos reais da mesma área, sem repetir os já oferecidos.
+            if (!selectedCourse && isExplicitMoreOptionsRequest(lastUserMessage)) {
+                const areaName = String(salesContext.requested_area_name || salesContext.selected_area || salesContext.related_area_name || '').trim();
+                const offered = new Set(((salesContext.related_area_courses || salesContext.area_courses || []) as unknown[]).map((item) => normalizeText(String(item || ''))));
+                const areaKey = normalizeText(areaName);
+                const others = Array.from(new Set((catalogRows as any[])
+                    .filter((row) => areaKey && normalizeText(String(row.area_name || '')) === areaKey)
+                    .map((row) => getCourseDisplayName(String(row.display_name || row.canonical_name || '')))
+                    .filter((label) => label && !offered.has(normalizeText(label)))));
+                if (others.length > 0) {
+                    const shown = others.slice(0, 5);
+                    (stageState as any).moreOptionsText = `Tem sim!! Na área de ${areaName}, também temos:\n\n${shown.map((label) => `- ${label}`).join('\n')}\n\nQual desses mais combina com o que você está buscando?`;
+                    leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
+                        related_area_courses: [...((salesContext.related_area_courses || salesContext.area_courses || []) as unknown[]), ...shown],
+                        pending_criterion: 'alternative_course_selection',
+                    });
+                }
+            }
             if (selectedCourse) {
                 stageState.classification = 'contextual_course_selection';
                 stageState.classificationReason = pendingCriterion === 'alternative_course_selection'
@@ -3789,6 +3824,13 @@ serve(async (req) => {
                             stageOutput.text = buildE5BoletoQuestionFallback(false);
                         }
                     }
+                }
+
+                if (hop === 0 && currentSubagent === 'E1' && (stageState as any).moreOptionsText) {
+                    stageOutput.avancou = false;
+                    stageOutput.toolCalls = filterKnowledgeToolCalls(filterAdvanceToolCalls(stageOutput.toolCalls));
+                    stageOutput.text = String((stageState as any).moreOptionsText);
+                    (stageOutput as any).lockedText = stageOutput.text;
                 }
 
                 // Spec E2: sem combinado aceito não existe E3 ("vai depender do valor" = resposta canônica e fica na E2).

@@ -687,7 +687,7 @@ function normalizeCourseChoice(text: string) {
     .trim();
 }
 
-function isExplicitMoreOptionsRequest(message: string) {
+export function isExplicitMoreOptionsRequest(message: string) {
   const normalized = normalize(message);
   return includesAny(normalized, [
     'tem mais',
@@ -699,6 +699,14 @@ function isExplicitMoreOptionsRequest(message: string) {
     'não gostei',
     'quero escolher outro',
     'quero ver outros',
+    'so essas',
+    'so esses',
+    'so isso',
+    'mais opcoes',
+    'mais algum',
+    'mais alguma',
+    'tem outro',
+    'tem outra',
   ]);
 }
 
