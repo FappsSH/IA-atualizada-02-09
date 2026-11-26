@@ -4912,13 +4912,25 @@ serve(async (req) => {
                 out.text = rebuilt.join('\n---\n');
             }
 
+            // E1 (spec): a reação ao curso é sempre o texto do documento.
+            if (finalSubagent === 'E1') {
+                const canonReaction = (value: string) => value
+                    .split(/\n\s*\n/)
+                    .map((paragraph) => (/(escolha de gradua[cç][aã]o|escolha excelente|excelente escolha)/i.test(paragraph) && !/\?/.test(paragraph)
+                        ? (/^prazer, [^!]+!!/i.test(paragraph) ? `${paragraph.match(/^prazer, [^!]+!!/i)![0]} ` : '') + 'Que escolha de graduação excelente!! Tenho certeza que você terá muitas oportunidades nessa área.'
+                        : paragraph))
+                    .join('\n\n');
+                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonReaction(String(part || '')));
+                out.text = canonReaction(String(out.text || ''));
+            }
+
             // E1: a reação ao curso ("Que escolha de graduação excelente!!") só sai uma vez por conversa.
             if (finalSubagent === 'E1') {
                 const previousAssistant = (payload.history ?? []).filter((item: any) => item?.role === 'assistant').map((item: any) => normalizeText(String(item?.content || '')));
-                if (previousAssistant.some((content: string) => content.includes('escolha de graduacao excelente'))) {
+                if (previousAssistant.some((content: string) => /escolha de graduacao|escolha excelente|excelente escolha/.test(content))) {
                     const dropReaction = (value: string) => value
                         .split(/\n\s*\n/)
-                        .filter((paragraph) => !/escolha de graduação excelente|terá muitas oportunidades/i.test(paragraph))
+                        .filter((paragraph) => !/escolha de graduação excelente|terá muitas oportunidades/i.test(paragraph.replace(/^prazer, [^!]+!!\s*/i, '')) || /^prazer/i.test(paragraph) && false)
                         .join('\n\n')
                         .trim();
                     if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => dropReaction(String(part || ''))).filter(Boolean);
