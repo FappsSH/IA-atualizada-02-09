@@ -4943,6 +4943,34 @@ serve(async (req) => {
                 }
             }
 
+            // E1: pediu OUTRO curso que não existe no catálogo ("E Medicina?") com um curso já confirmado:
+            // nunca ignorar. Diz que não temos e segue com o curso confirmado.
+            if (finalSubagent === 'E1') {
+                const askedIntent = detectCatalogIntentWithHistory(String(lastUserMessage || ''), payload.history ?? []);
+                const askedQuery = normalizeText(expandCourseAbbreviation(String(askedIntent.query || ''))).trim();
+                const { data: courseLeadNow } = await supabase.from('leads').select('sales_context, curso_interesse').eq('id', payload.lead_id).single();
+                const nowCtx = (courseLeadNow?.sales_context || {}) as Record<string, unknown>;
+                const confirmedName = getCourseDisplayName(String(nowCtx.course_display_name || courseLeadNow?.curso_interesse || ''));
+                if (askedIntent.matched && askedQuery && askedQuery.length >= 3 && String(nowCtx.course_status || '') === 'confirmed_available'
+                    && !isSameAsConfirmedCourse(askedQuery, courseLeadNow)) {
+                    const { data: rows } = await supabase.from('course_catalog_entries').select('canonical_name').eq('tenant_id', payload.tenant_id).eq('active', true).limit(800);
+                    const tokens = askedQuery.split(/\s+/).filter((token) => token.length >= 3);
+                    const exists = (rows || []).some((row: any) => {
+                        const name = ` ${normalizeText(String(row.canonical_name || ''))}`;
+                        return tokens.length > 0 && tokens.every((token) => name.includes(` ${token}`));
+                    });
+                    if (!exists) {
+                        const askedLabel = prettyPtLabel(String(askedIntent.query || '').replace(/[?!.,]/g, '').trim());
+                        const pending = String(nowCtx.pending_criterion || '');
+                        const resumeQ = pending === 'motivation'
+                            ? 'Me conta, você já trabalha nessa área ou essa graduação representa um sonho ou objetivo pessoal pra você?'
+                            : 'Me confirma de qual cidade você é, por gentileza?';
+                        out.text = `A graduação em ${askedLabel} não está entre as opções que temos hoje.\n\nSe fizer sentido pra você, seguimos com ${confirmedName || 'o curso que você escolheu'}. ${resumeQ}`;
+                        out.atomicMessages = [out.text];
+                    }
+                }
+            }
+
             // E1 (spec): lista de cursos alternativos tem no máximo 5 itens.
             if (finalSubagent === 'E1') {
                 const capList = (value: string) => {
