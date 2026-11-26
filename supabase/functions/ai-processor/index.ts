@@ -6,9 +6,9 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { routeByEtapa } from './router.ts';
 import { runSubagent, validateE3PresentationBlocks } from './subagent.ts';
-import { buildE3PresentationMessages } from './e3-presentation.ts';
+import { buildE3PresentationMessages, E3_IMAGE_CAPTION } from './e3-presentation.ts';
 import { buildE4ResumeMessages, buildMotivationLink } from './e4-resume.ts';
-import { asksInternshipHours, INTERNSHIP_HOURS_REPLY, isShortAcknowledgement } from '../_shared/academic-questions.ts';
+import { asksAboutExams, asksInternshipHours, buildExamsReply, INTERNSHIP_HOURS_REPLY, isShortAcknowledgement } from '../_shared/academic-questions.ts';
 import { extractReferralName, looksLikeReferralPhone, referralPhoneFrom, userDeclinesReferral } from '../_shared/referral.ts';
 import { runJudgeWithPreFilter } from './judge.ts';
 import { readMessage, deleteMessage, archiveMessage } from '../_shared/pgmq.ts';
@@ -2322,6 +2322,8 @@ serve(async (req) => {
             }
         }
 
+        // Nome recebido agora pela pergunta do nome: a próxima resposta começa com "Prazer, [NOME]!!".
+        let nameJustResolvedFirstName = '';
         const latestSalesContextForNameGate = await readLeadSalesContext(supabase, payload.lead_id);
         Object.assign(salesContextBeforeInbound, latestSalesContextForNameGate);
         if (leadSnapshot) leadSnapshot.sales_context = latestSalesContextForNameGate;
@@ -2385,6 +2387,7 @@ serve(async (req) => {
                     .maybeSingle();
                 if (nameUpdate.error) throw nameUpdate.error;
                 const persistedName = nameUpdate.data || {};
+                nameJustResolvedFirstName = String(persistedName.lead_first_name || resolvedName.leadFirstName || '').trim();
                 const nextSalesContext = await mergeLeadSalesContext(supabase, payload.lead_id, {
                     pending_pre_name_input: null,
                     pending_pre_name_started_at: null,
@@ -3807,12 +3810,17 @@ serve(async (req) => {
 
                 // Spec (admin, 24/11): horas de estágio não estão no catálogo. A AgentHub promete buscar,
                 // o admin responde junto com a proposta e a retomada repassa ao lead.
-                if (hop === 0 && (currentSubagent === 'E3' || currentSubagent === 'E4')) {
+                if (hop === 0 && (currentSubagent === 'E2' || currentSubagent === 'E3' || currentSubagent === 'E4')) {
                     const academicCtx = await readLeadSalesContext(supabase, payload.lead_id);
                     const proposalAlreadySent = academicCtx.proposal_checkpoint_completed === true;
                     const knownHours = String(academicCtx.internship_hours_answer || '').trim();
                     let academicText: string | null = null;
-                    if (asksInternshipHours(activeLastUserMessage)) {
+                    if (asksAboutExams(activeLastUserMessage) && !asksInternshipHours(activeLastUserMessage)) {
+                        // Spec (admin 25/11): provas pela plataforma; semipresencial = primeiros semestres + tutores; EAD = sem ir ao polo, sem deslocamento.
+                        const examLead = await completeCourseFactsFromCatalog(supabase, payload.tenant_id, { ...(leadSnapshot || {}), sales_context: academicCtx });
+                        const examModality = String((examLead?.sales_context as any)?.modalidade_oferta || (examLead?.sales_context as any)?.delivery_mode || leadSnapshot?.modalidade || '');
+                        academicText = buildExamsReply(examModality, getTrustedOpeningFirstName(leadSnapshot));
+                    } else if (currentSubagent !== 'E2' && asksInternshipHours(activeLastUserMessage)) {
                         if (proposalAlreadySent && knownHours) {
                             const courseLabel = getCourseDisplayName(String(academicCtx.course_display_name || leadSnapshot?.curso_interesse || ''));
                             academicText = `O estágio${courseLabel ? ` de ${courseLabel}` : ''} tem ${knownHours}.`;
@@ -4756,6 +4764,8 @@ serve(async (req) => {
                         out.atomicMessages[2] = trustedFirstName
                             ? `De todos esses pontos que eu te apresentei ${trustedFirstName}, quais foram os que você mais gostou e que mais fizeram sentido pra você?`
                             : 'De todos esses pontos que eu te apresentei, quais foram os que você mais gostou e que mais fizeram sentido pra você?';
+                        // Legenda curta logo abaixo da imagem (decisão do administrador, 25/11).
+                        out.atomicMessages = [E3_IMAGE_CAPTION, ...out.atomicMessages];
                         out.text = out.atomicMessages.join('\n---\n');
                     }
                 } catch (e3SafetyError) {
@@ -4843,10 +4853,29 @@ serve(async (req) => {
 
             // E1 (spec): a pergunta da cidade sai sempre na forma canônica.
             if (finalSubagent === 'E1') {
-                const cityFirstName = getTrustedOpeningFirstName(leadSnapshot);
+                const cityFirstName = nameJustResolvedFirstName ? '' : getTrustedOpeningFirstName(leadSnapshot);
                 const canonCity = (value: string) => /valores sim/i.test(value) ? value : value.replace(/(?:(?!Antes)\p{Lu}\p{Ll}+,\s*)?[Mm]e confirma,?\s*(de|da)\s+qual cidade você é,?\s*(por gentileza)?\s*\??/u, cityFirstName ? `${cityFirstName}, me confirma de qual cidade você é, por gentileza?` : 'Me confirma de qual cidade você é, por gentileza?');
                 if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonCity(String(part || '')));
                 out.text = canonCity(String(out.text || ''));
+            }
+
+            if (finalSubagent === 'E1' && nameJustResolvedFirstName) {
+                const greet = (value: string) => /^prazer/i.test(value) ? value : `Prazer, ${nameJustResolvedFirstName}!! ${value}`;
+                if (Array.isArray(out.atomicMessages) && out.atomicMessages.length) {
+                    out.atomicMessages = [greet(String(out.atomicMessages[0] || '')), ...out.atomicMessages.slice(1)];
+                    out.text = out.atomicMessages.join('\n---\n');
+                } else {
+                    out.text = greet(String(out.text || ''));
+                }
+            }
+
+            // E2 (spec): pergunta da viagem/mudança com o nome quando existe.
+            if (/viagem mais longa/i.test(String(out.text || '')) || (Array.isArray(out.atomicMessages) && out.atomicMessages.some((part: unknown) => /viagem mais longa/i.test(String(part || ''))))) {
+                const travelName = getTrustedOpeningFirstName(leadSnapshot);
+                const travelQ = `${travelName ? `${travelName}, deixa` : 'Deixa'} eu te perguntar também, você tem alguma viagem mais longa ou mudança planejada para os próximos meses que possa interferir no início da graduação?`;
+                const canonTravel = (value: string) => value.replace(/(?:(?!Antes)\p{Lu}\p{Ll}+,\s*)?(?:[Dd]eixa eu te perguntar(?: também)?,?\s*)?(?:\p{Lu}\p{Ll}+,\s*)?[Vv]ocê tem alguma viagem mais longa[^?]*\?/u, travelQ);
+                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonTravel(String(part || '')));
+                out.text = canonTravel(String(out.text || ''));
             }
 
             // E1 (spec): pergunta de valor na E1 -> "vou te passar os valores sim" + a pergunta pendente, sem números.

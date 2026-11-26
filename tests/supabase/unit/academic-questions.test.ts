@@ -19,3 +19,22 @@ describe('horas de estagio (regra do admin 24/11)', () => {
     expect(isShortAcknowledgement('Gostei muito do estágio')).toBe(false);
   });
 });
+
+import { asksAboutExams, buildExamsReply } from '../../../supabase/functions/_shared/academic-questions.ts';
+describe('provas (regra do admin 25/11)', () => {
+  it('detecta', () => {
+    expect(asksAboutExams('E as provas, como funcionam?')).toBe(true);
+    expect(asksAboutExams('tem avaliação presencial?')).toBe(true);
+    expect(asksAboutExams('Quanto custa?')).toBe(false);
+  });
+  it('semipresencial: primeiros semestres pela plataforma + tutores', () => {
+    const r = buildExamsReply('semipresencial', 'Ana');
+    expect(r).toContain('Nos primeiros semestres, as provas são feitas pela plataforma, Ana.');
+    expect(r).toContain('tutores');
+  });
+  it('EAD: todas pela plataforma, sem ir ao polo, sem custo de deslocamento', () => {
+    const r = buildExamsReply('ead', null);
+    expect(r).toContain('Todas as provas são feitas pela plataforma, sem precisar ir até o polo.');
+    expect(r).toContain('custo de deslocamento');
+  });
+});

@@ -217,7 +217,8 @@ try {
   check(M, 'depende do valor', 'continua na E2', t7.after.etapa_atual === 'E2', t7.after.etapa_atual);
 
   const t8 = await turn(M, lead, 'Pode ser');
-  const e3Texts = t8.texts;
+  check(M, 'E3', 'legenda curta logo abaixo da imagem', /essa imagem resume/i.test(t8.texts[0] || '') && t8.out[0]?.kind === 'media' && t8.out[1]?.kind === 'text', t8.texts[0]);
+  const e3Texts = t8.texts.filter((x) => !/essa imagem resume/i.test(x));
   const e3Media = t8.out.filter((m) => m.kind === 'media').length;
   check(M, 'E3', 'avançou para E3', t8.after.etapa_atual === 'E3', t8.after.etapa_atual);
   check(M, 'E3', 'imagem da instituição enviada', e3Media === 1, e3Media);
@@ -236,6 +237,8 @@ try {
   check(M, 'E3 dúvida', 'horas de estágio: frase exata definida pelo administrador', t9.texts.length === 1 && t9.texts[0] === 'A quantidade de horas exatas eu vou solicitar pro setor acadêmico e te envio assim que receber, tudo bem?', t9.texts);
   const t9b = await turn(M, lead, 'Tudo bem');
   check(M, 'E3 dúvida', 'depois do "tudo bem" volta para a pergunta final da E3', t9b.texts.length === 1 && /de todos esses pontos/.test(norm(t9b.joined)) && /mais gostou/.test(norm(t9b.joined)) && t9b.after.etapa_atual === 'E3' && t9b.out.every((m) => m.kind !== 'media'), [t9b.after.etapa_atual, t9b.texts]);
+  const t9c = await turn(M, lead, 'E as provas, como funcionam?');
+  check(M, 'E3 dúvida', 'provas (semipresencial): primeiros semestres pela plataforma + tutores acompanhando', /primeiros semestres/.test(norm(t9c.joined)) && /plataforma/.test(norm(t9c.joined)) && /tutores/.test(norm(t9c.joined)) && t9c.after.etapa_atual === 'E3', [t9c.after.etapa_atual, t9c.texts]);
   check(M, 'E3 dúvida', 'continua na E3', t9.after.etapa_atual === 'E3', t9.after.etapa_atual);
   check(M, 'E3 dúvida', 'não reenvia a imagem', t9.out.every((m) => m.kind !== 'media'), t9.out.map((m) => m.kind));
 
@@ -325,8 +328,8 @@ try {
   const r5c = await turn(R5, r5, 'Combinado');
   check(R5, 'combinado direto', 'vai para a E3', r5c.after.etapa_atual === 'E3', r5c.after.etapa_atual);
   check(R5, 'E3', 'imagem da instituição enviada antes dos textos', r5c.out[0]?.kind === 'media' && r5c.out.filter((m) => m.kind === 'media').length === 1, r5c.out.map((m) => m.kind));
-  check(R5, 'E3', 'textos não repetem a imagem nem inventam', !/(premiad|\bmec\b|diploma|reconhecid|60 anos|anos de (historia|tradicao)|tradicao de mais|blackboard|tutor|abrir muitas portas|se destacar)/.test(norm(r5c.texts.join(' '))), r5c.texts);
-  check(R5, 'E3', 'liga o curso ao sonho', /sonho/.test(norm(r5c.texts[1] || '')), r5c.texts);
+  check(R5, 'E3', 'textos não repetem a imagem nem inventam', !/(premiad|\bmec\b|diploma|reconhecid|60 anos|anos de (historia|tradicao)|tradicao de mais|blackboard|tutor|abrir muitas portas|se destacar)/.test(norm(r5c.texts.filter((x) => !/essa imagem resume/i.test(x)).join(' '))), r5c.texts);
+  check(R5, 'E3', 'liga o curso ao sonho', /sonho/.test(norm(r5c.texts.filter((x) => !/essa imagem resume/i.test(x))[1] || '')), r5c.texts);
 
   const R6 = 'recusa de indicação';
   const r6 = await newLead('+5500091000106', { name: 'Lucas Dias' });

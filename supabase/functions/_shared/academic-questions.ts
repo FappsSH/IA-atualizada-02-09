@@ -22,3 +22,20 @@ export function extractInternshipHours(adminText: string): string | null {
   const match = String(adminText || '').match(/(\d{2,4}(?:[.,]\d+)?)\s*(?:h\b|hs\b|hrs?\b|horas?\b)/i);
   return match ? `${match[1]} horas` : null;
 }
+
+// Provas (decisão do administrador, 25/11/2026).
+export function asksAboutExams(message: string): boolean {
+  const n = strip(message);
+  return /\b(prova|provas|avaliacao|avaliacoes|exame|exames)\b/.test(n);
+}
+
+export function buildExamsReply(modality: string, firstName?: string | null): string {
+  const m = strip(modality);
+  const name = String(firstName || '').trim();
+  if (m.includes('semi')) {
+    return `Nos primeiros semestres, as provas são feitas pela plataforma${name ? `, ${name}` : ''}.\n\n`
+      + 'E não precisa se preocupar: quando chegar essa época, os tutores vão estar acompanhando de pertinho pra te ajudar da melhor forma.';
+  }
+  return `Todas as provas são feitas pela plataforma${name ? `, ${name}` : ''}, sem precisar ir até o polo.\n\n`
+    + 'Ou seja, você não vai ter nenhum custo de deslocamento com isso.';
+}

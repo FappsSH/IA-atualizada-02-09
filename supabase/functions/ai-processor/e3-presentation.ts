@@ -26,6 +26,10 @@ export function formatDurationYearsFromSemesters(semesters: unknown) {
   return `${fullYears} ${fullYears === 1 ? 'ano' : 'anos'}`;
 }
 
+// Mensagem curta logo abaixo da imagem da instituição (decisão do administrador, 25/11):
+// diz do que a imagem fala, sem explicar cada ponto.
+export const E3_IMAGE_CAPTION = 'Essa imagem resume um pouco de quem é a Cruzeiro do Sul: a nossa tradição, o reconhecimento do MEC, o diploma, a plataforma, a tutoria e a flexibilidade pra você estudar do seu jeito. Dá uma olhadinha com calma!!';
+
 export function buildE3PresentationMessages(params: {
   leadSnapshot: Record<string, unknown> | null | undefined;
   authorizedFacts?: Array<Record<string, unknown>>;
@@ -60,24 +64,29 @@ export function buildE3PresentationMessages(params: {
     .map((fact) => String(fact.content || '').trim())
     .filter(Boolean);
 
+  const city = String(lead.cidade || salesContext.cidade || '').trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word, index) => (index > 0 && ['de', 'do', 'da', 'dos', 'das'].includes(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join(' ');
   const durationSentence = durationText && durationYears
-    ? `A graduação em ${courseName} tem duração de ${durationText}, o que equivale a ${durationYears}`
+    ? `A graduação em ${courseName} dura ${durationText}, ou seja, ${durationYears}.`
     : durationText
-      ? `A graduação em ${courseName} tem duração de ${durationText}`
-      : `A graduação em ${courseName}`;
+      ? `A graduação em ${courseName} dura ${durationText}.`
+      : `Sobre a graduação em ${courseName}:`;
   const modalitySentence = modality === 'EAD'
-    ? ', e a modalidade é EAD, então você assiste às aulas no dia e horário que melhor se encaixar na sua rotina, respeitando as datas e os compromissos acadêmicos.'
+    ? ' Ela é 100% EAD, então você assiste às aulas no dia e horário que encaixarem melhor na sua rotina, só respeitando as datas do calendário acadêmico.'
     : modality === 'semipresencial'
-      ? ', e a modalidade é semipresencial, com aulas ao vivo pela plataforma nos primeiros semestres, numa experiência bem próxima da aula presencial.'
-      : '.';
+      ? ' Ela é semipresencial: nos primeiros semestres as aulas são ao vivo pela plataforma, então você acompanha de onde estiver, numa experiência bem próxima da sala de aula.'
+      : '';
   const internshipSentence = hasInternship === true
-    ? 'Ela tem estágio, e ele pode ser realizado na sua própria cidade caso você não tenha condições de se deslocar até o polo.'
+    ? `E ela tem estágio, que você pode fazer ${city ? `aí em ${city} mesmo` : 'na sua própria cidade'}, caso não consiga se deslocar até o polo.`
     : hasInternship === false
-      ? 'E ela não tem estágio, então você não precisa se preocupar com deslocamento para essa etapa da formação.'
+      ? 'E ela não tem estágio, então você não precisa se preocupar com deslocamento nessa parte da formação.'
       : '';
 
   const courseMessage = [
-    `${durationSentence}${modalitySentence}`,
+    `${durationSentence}${modalitySentence}`.trim(),
     internshipSentence,
   ].filter(Boolean).join('\n\n');
 

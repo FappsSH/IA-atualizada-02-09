@@ -184,7 +184,8 @@ try {
   const PRICE_LEAK = /r\$\s*\d|\d+\s*%|\bmensalidade de\b|\breais\b/;
 
   function e3Checks(sc: string, t: any, o: { course: RegExp; internship: boolean; motivation: RegExp; withName?: boolean }) {
-    const tx = t.texts;
+    check(sc, 'E3', 'legenda curta logo abaixo da imagem', /essa imagem resume/i.test(t.texts[0] || ''), t.texts[0]);
+    const tx = t.texts.filter((x: string) => !/essa imagem resume/i.test(x));
     check(sc, 'E3', 'avançou para E3', t.after.etapa_atual === 'E3', t.after.etapa_atual);
     check(sc, 'E3', 'uma imagem, antes dos textos, e é a oficial', t.out[0]?.kind === 'media' && t.out.filter((m: any) => m.kind === 'media').length === 1 && t.out[0]?.mediaHash === officialImageHash, t.out.map((m: any) => m.kind));
     check(sc, 'E3', 'exatamente 3 mensagens de texto', tx.length === 3, tx);
@@ -224,7 +225,7 @@ try {
   check(X1, 'decide sozinha', 'combinado direto', /combinado\?/.test(norm(x1f.joined)) && /inscricao/.test(norm(x1f.joined)), x1f.joined);
   const x1g = await turn(X1, x1, 'Combinado');
   e3Checks(X1, x1g, { course: /pedagogia/, internship: true, motivation: /trabalh|atua|pratica|experiencia|escola|dia a dia/ });
-  check(X1, 'E3', 'pergunta final com o nome (Fernanda)', /apresentei fernanda/.test(norm(x1g.texts[2] || '')) && !ASK_NAME.test(norm(x1g.joined)), x1g.texts[2]);
+  check(X1, 'E3', 'pergunta final com o nome (Fernanda)', /apresentei fernanda/.test(norm(x1g.texts.filter((x: string) => !/essa imagem resume/i.test(x))[2] || '')) && !ASK_NAME.test(norm(x1g.joined)), x1g.texts.filter((x: string) => !/essa imagem resume/i.test(x))[2]);
   const x1h = await turn(X1, x1, 'Gostei da flexibilidade e do estágio');
   check(X1, 'E3 -> E4', 'pede nome completo', /nome completo/.test(norm(x1h.joined)) && x1h.after.etapa_atual === 'E4', [x1h.after.etapa_atual, x1h.joined]);
   const x1i = await turn(X1, x1, 'Fernanda Lima Costa');
@@ -271,7 +272,9 @@ try {
   check(X2, 'decisor', 'acolhe a esposa e faz o combinado completo', /ela|esposa/.test(norm(x2f.joined)) && /continuamos amigos/.test(norm(x2f.joined)) && /combinado\?/.test(norm(x2f.joined)), x2f.joined);
   const x2g = await turn(X2, x2, 'Combinado');
   e3Checks(X2, x2g, { course: /administracao/, internship: false, motivation: /cresc|empresa|trabalh|carreira/ });
-  check(X2, 'E3', 'pergunta final com o nome (Rafael)', /rafael/.test(norm(x2g.texts[2] || '')), x2g.texts[2]);
+  check(X2, 'E3', 'pergunta final com o nome (Rafael)', /rafael/.test(norm(x2g.texts.filter((x: string) => !/essa imagem resume/i.test(x))[2] || '')), x2g.texts.filter((x: string) => !/essa imagem resume/i.test(x))[2]);
+  const x2p = await turn(X2, x2, 'E as provas?');
+  check(X2, 'provas', 'provas (EAD): todas pela plataforma, sem ir ao polo, sem custo de deslocamento', /todas as provas/.test(norm(x2p.joined)) && /sem precisar ir ate o polo/.test(norm(x2p.joined)) && /deslocamento/.test(norm(x2p.joined)) && x2p.after.etapa_atual === 'E3', [x2p.after.etapa_atual, x2p.texts]);
   const x2h = await turn(X2, x2, 'E qual o valor?');
   check(X2, 'valor na E3', 'segue para a E4 pedindo o nome completo, sem dar preço', x2h.after.etapa_atual === 'E4' && /nome completo/.test(norm(x2h.joined)) && !PRICE_LEAK.test(norm(x2h.joined)), [x2h.after.etapa_atual, x2h.joined]);
 
