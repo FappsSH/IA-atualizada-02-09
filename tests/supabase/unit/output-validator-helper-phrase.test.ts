@@ -7,4 +7,10 @@ describe('ajudar melhor', () => {
     expect(out).not.toMatch(/ajudar melhor/i);
     expect(out).toMatch(/Me conta qual área/);
   });
+  it('remove fecho de suporte', () => {
+    const fn: any = (V as any).validateOutboundText;
+    const out = JSON.stringify(fn('Todas as provas são feitas pela plataforma.\n\nSe precisar de mais detalhes ou tiver outras dúvidas, fique à vontade para perguntar.'));
+    expect(out).not.toMatch(/vontade|outras d/i);
+    expect(out).toMatch(/plataforma/);
+  });
 });

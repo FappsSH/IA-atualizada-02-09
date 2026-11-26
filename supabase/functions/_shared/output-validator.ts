@@ -53,7 +53,7 @@ function sanitizeParagraph(paragraph: string) {
   // Remove a frase inteira (nunca corta no meio da frase).
   next = next
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !/estou aqui|estou por aqui|estou [àa] disposi[cç][aã]o|fico [àa] disposi[cç][aã]o|se precisar de (mais )?alguma|se precisar de qualquer|se tiver (mais |outras |qualquer |alguma )?(d[uú]vidas?|pergunta)|pode perguntar|qualquer (coisa|d[uú]vida),? ([eé] s[oó] |me )?(chamar|chama|falar|perguntar)/i.test(sentence))
+    .filter((sentence) => !/estou aqui|estou por aqui|estou [àa] disposi[cç][aã]o|fico [àa] disposi[cç][aã]o|se precisar de (mais )?alguma|se precisar de qualquer|se tiver (mais |outras |qualquer |alguma )?(d[uú]vidas?|pergunta)|pode perguntar|fique [àa] vontade|fica [àa] vontade (para|pra) (perguntar|me chamar|chamar)|outras d[uú]vidas|mais detalhes ou|qualquer (coisa|d[uú]vida),? ([eé] s[oó] |me )?(chamar|chama|falar|perguntar)/i.test(sentence))
     .join(' ');
 
   // Spec PERSONALITY: sem "para te ajudar melhor" / "para eu entender melhor" (tira só a expressão).
