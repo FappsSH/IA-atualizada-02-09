@@ -2619,7 +2619,9 @@ export async function runSubagent(input: SubagentInput): Promise<SubagentOutput>
   // (evita "não temos esse curso" para frases como "minha família toda fez").
   const answeringQualificationWithConfirmedCourse = input.etapaAtual === 'E1'
     && ['city', 'motivation'].includes(String(pendingCriterionBefore || ''))
-    && String(currentSalesContext.course_status || '').trim() === 'confirmed_available';
+    && String(currentSalesContext.course_status || '').trim() === 'confirmed_available'
+    // Pedido de OUTRO curso no meio da qualificação ("E Medicina?") precisa ser consultado no catálogo.
+    && !(catalogIntent.matched && String(catalogIntent.query || '').trim());
   if (mustConsultCourseBeforeReply && !answeringQualificationWithConfirmedCourse && !hasAnyCourseLookup(out.toolCalls)) {
     const initialQuery = buildCourseQueryCandidate(effectiveCatalogIntent.query || latestUserMessage);
     if (initialQuery) {

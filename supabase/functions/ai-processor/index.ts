@@ -4914,11 +4914,16 @@ serve(async (req) => {
 
             // E1 (spec): a reação ao curso é sempre o texto do documento.
             if (finalSubagent === 'E1') {
+                // Troca só as frases da reação; o resto do parágrafo (ex.: as linhas bacharelado/licenciatura) fica.
+                const REACTION = /(escolha de gradua[cç][aã]o|escolha excelente|excelente escolha|muitas oportunidades|cheia de oportunidades|[aá]rea (muito )?promissora|oferece diversas oportunidades)/i;
                 const canonReaction = (value: string) => value
                     .split(/\n\s*\n/)
-                    .map((paragraph) => (/(escolha de gradua[cç][aã]o|escolha excelente|excelente escolha)/i.test(paragraph) && !/\?/.test(paragraph)
-                        ? (/^prazer, [^!]+!!/i.test(paragraph) ? `${paragraph.match(/^prazer, [^!]+!!/i)![0]} ` : '') + 'Que escolha de graduação excelente!! Tenho certeza que você terá muitas oportunidades nessa área.'
-                        : paragraph))
+                    .map((paragraph) => {
+                        if (!/(escolha de gradua[cç][aã]o|escolha excelente|excelente escolha)/i.test(paragraph)) return paragraph;
+                        const prazer = paragraph.match(/^prazer, [^!]+!!\s*/i)?.[0] || '';
+                        const rest = paragraph.slice(prazer.length).split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim() && !REACTION.test(sentence));
+                        return [`${prazer}Que escolha de graduação excelente!! Tenho certeza que você terá muitas oportunidades nessa área.`, rest.join(' ')].filter(Boolean).join('\n\n');
+                    })
                     .join('\n\n');
                 if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => canonReaction(String(part || '')));
                 out.text = canonReaction(String(out.text || ''));
