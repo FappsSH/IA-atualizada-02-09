@@ -1460,6 +1460,27 @@ async function completeCourseFactsFromCatalog(supabase: any, tenantId: string, l
     };
 }
 
+// Acentos e minúsculas nos nomes que vêm do catálogo sem acento ("Saude e Beleza", "Optica E Optometria").
+function prettyPtLabel(label: string) {
+    const fixes: Record<string, string> = {
+        saude: 'Saúde', servico: 'Serviço', servicos: 'Serviços', optica: 'Óptica', optometria: 'Optometria', nutricao: 'Nutrição',
+        educacao: 'Educação', fisica: 'Física', ciencias: 'Ciências', biologicas: 'Biológicas', gestao: 'Gestão', publica: 'Pública',
+        estetica: 'Estética', cosmetica: 'Cosmética', administracao: 'Administração', comunicacao: 'Comunicação', tecnologia: 'Tecnologia',
+        informacao: 'Informação', analise: 'Análise', engenharia: 'Engenharia', eletrica: 'Elétrica', mecanica: 'Mecânica', quimica: 'Química',
+        farmacia: 'Farmácia', psicologia: 'Psicologia', pedagogia: 'Pedagogia', historia: 'História', geografia: 'Geografia', matematica: 'Matemática',
+        letras: 'Letras', logistica: 'Logística', juridicos: 'Jurídicos', notariais: 'Notariais', penais: 'Penais', radiologia: 'Radiologia',
+        economicas: 'Econômicas', contabeis: 'Contábeis', gerontologia: 'Gerontologia', terapia: 'Terapia', ocupacional: 'Ocupacional',
+        naturologia: 'Naturologia', hospitalar: 'Hospitalar', podologia: 'Podologia', integrativas: 'Integrativas', complementares: 'Complementares',
+    };
+    const small = new Set(['e', 'de', 'da', 'do', 'das', 'dos', 'em']);
+    return String(label || '').split(/\s+/).filter(Boolean).map((word, index) => {
+        const key = normalizeText(word);
+        if (index > 0 && small.has(key)) return key;
+        if (fixes[key]) return fixes[key];
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    }).join(' ');
+}
+
 function isSameAsConfirmedCourse(query: string, lead: any) {
     const ctx = (lead?.sales_context || {}) as Record<string, unknown>;
     if (String(ctx.course_status || '').trim() !== 'confirmed_available') return false;
@@ -2691,8 +2712,8 @@ serve(async (req) => {
                     .map((row) => getCourseDisplayName(String(row.display_name || row.canonical_name || '')))
                     .filter((label) => label && !offered.has(normalizeText(label)))));
                 if (others.length > 0) {
-                    const shown = others.slice(0, 5);
-                    (stageState as any).moreOptionsText = `Tem sim!! Na área de ${areaName}, também temos:\n\n${shown.map((label) => `- ${label}`).join('\n')}\n\nQual desses mais combina com o que você está buscando?`;
+                    const shown = others.slice(0, 5).map(prettyPtLabel);
+                    (stageState as any).moreOptionsText = `Tem sim!! Na área de ${prettyPtLabel(areaName)}, também temos:\n\n${shown.map((label) => `- ${label}`).join('\n')}\n\nQual desses mais combina com o que você está buscando?`;
                     leadSnapshot.sales_context = await mergeLeadSalesContext(supabase, payload.lead_id, {
                         related_area_courses: [...((salesContext.related_area_courses || salesContext.area_courses || []) as unknown[]), ...shown],
                         pending_criterion: 'alternative_course_selection',
@@ -4923,7 +4944,7 @@ serve(async (req) => {
             }
 
             // E1 (spec): pergunta de valor na E1 -> "vou te passar os valores sim" + a pergunta pendente, sem números.
-            if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|valores|custa|preco|mensalidade)\b|\bquanto\s+(ta|esta|e|custa|fica|sai|seria|cobra|cobram)\b/.test(normalizeText(String(lastUserMessage || ''))))) {
+            if (finalSubagent === 'E1' && (userAskedFinancialQuestion(String(lastUserMessage || '')) || /\b(valor|valores|custa|preco|mensalidade)\b|\bquanto\s+(ta|esta|e|custa|fica|sai|seria|cobra|cobram)\b|\b(ta|esta|fica|sai|custa|e)\s+quanto\b/.test(normalizeText(String(lastUserMessage || ''))))) {
                 const addPriceAck = (value: string) => {
                     if (/valores sim/i.test(value)) return value;
                     return value

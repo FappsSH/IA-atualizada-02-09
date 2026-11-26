@@ -344,7 +344,8 @@ try {
   const x7c = await turn(X7, x7, 'são só essas ?');
   check(X7, 'são só essas', 'mostra OUTROS cursos reais da área, sem repetir os já oferecidos', x7c.joined.length > 0 && !/biomedicina/.test(norm(x7c.joined)) && /farmacia|nutricao|fisioterapia|radiologia|psicologia/.test(norm(x7c.joined)), x7c.texts);
   const x7d = await turn(X7, x7, 'Nutrição tá quanto');
-  check(X7, 'Nutrição tá quanto', 'reconhece Nutrição (está no catálogo), diz que passa os valores e pede a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x7d.joined)) && /nutricao/.test(norm(x7d.joined) + norm(String(x7d.after?.curso_interesse || ''))) && /cidade/.test(norm(x7d.joined)), [x7d.after?.curso_interesse, x7d.texts]);
+  check(X7, 'Nutrição tá quanto', 'reconhece Nutrição (está no catálogo), diz que passa os valores e pede a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x7d.joined)) && /nutricao/.test(norm(x7d.joined) + norm(String(x7d.after?.curso_interesse || ''))) && /valores sim/.test(norm(x7d.joined)) && /cidade/.test(norm(x7d.joined)), [x7d.after?.curso_interesse, x7d.texts]);
+  check(X7, 'são só essas', 'nomes com acento', !/Saude e Beleza|Servico Social|Optica E Optometria/.test(x7c.joined), x7c.texts);
 
   // ── X8: depois da lista de Saúde, pede um curso de OUTRA área
   const X8 = 'X8 lista de Saúde -> pede curso de outra área (Administração)';
@@ -354,7 +355,7 @@ try {
   const x8b = await turn(X8, x8, 'E Administração, vocês têm?');
   check(X8, 'outra área', 'aceita Administração (catálogo) e segue para a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x8b.joined)) && /cidade/.test(norm(x8b.joined)), x8b.texts);
   const x8c = await turn(X8, x8, 'E Medicina?');
-  check(X8, 'curso inexistente', 'Medicina não existe: explica sem inventar e sem "infelizmente"', /medicina/.test(norm(x8c.joined)) && !/infelizmente|nao localizei|consultei/.test(norm(x8c.joined)), x8c.texts);
+  check(X8, 'curso inexistente', 'Medicina não existe: diz que não está entre as opções (não confunde com Biomedicina), sem "infelizmente"', /medicina/.test(norm(x8c.joined)) && /nao (esta|temos|oferecemos|faz parte)/.test(norm(x8c.joined)) && !/infelizmente|nao localizei|consultei/.test(norm(x8c.joined)), x8c.texts);
 
   // ── G: portão do webhook (quem NÃO é lead não é atendido) — nada é enviado
   const G = 'portão do webhook';

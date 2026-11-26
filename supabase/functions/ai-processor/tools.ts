@@ -938,6 +938,11 @@ function buildStructuredCourseLabel(entry: any) {
     return parts.join(' ');
 }
 
+function hasWordPrefix(haystack: string, token: string) {
+    if (!token) return true;
+    return (` ${haystack}`).includes(` ${token}`);
+}
+
 function scoreStructuredCourseEntry(entry: any, query: string) {
     const normalizedQuery = normalizeCourseText(query);
     const tokens = extractCourseSearchTokens(query);
@@ -958,7 +963,7 @@ function scoreStructuredCourseEntry(entry: any, query: string) {
 
     for (const token of tokens) {
         for (const haystack of haystacks) {
-            if (haystack.includes(token)) {
+            if (hasWordPrefix(haystack, token)) {
                 score += 12;
                 break;
             }
@@ -1111,7 +1116,8 @@ function browseStructuredCourses(query: string, entries: any[]) {
             ...(entry.course_catalog_aliases || []).map((alias: any) => alias.alias_text),
         ].filter(Boolean).join(' '));
 
-        return tokens.every((token) => haystack.includes(token));
+        // Palavra inteira ou começo de palavra: "medicina" não pode casar com "biomedicina".
+        return tokens.every((token) => hasWordPrefix(haystack, token));
     });
 
     const ranked = filtered
