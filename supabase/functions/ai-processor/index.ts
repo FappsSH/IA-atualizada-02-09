@@ -4860,7 +4860,9 @@ serve(async (req) => {
             }
 
             if (finalSubagent === 'E1' && nameJustResolvedFirstName) {
-                const greet = (value: string) => /^prazer/i.test(value) ? value : `Prazer, ${nameJustResolvedFirstName}!! ${value}`;
+                // Um nome só por mensagem: tira o ", Fernanda" que a IA possa ter colocado e abre com "Prazer, Fernanda!!".
+                const nameRe = new RegExp(`,?\\s*${nameJustResolvedFirstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[!?.,\\s])`, 'g');
+                const greet = (value: string) => /^prazer/i.test(value) ? value : `Prazer, ${nameJustResolvedFirstName}!! ${value.replace(nameRe, '')}`;
                 if (Array.isArray(out.atomicMessages) && out.atomicMessages.length) {
                     out.atomicMessages = [greet(String(out.atomicMessages[0] || '')), ...out.atomicMessages.slice(1)];
                     out.text = out.atomicMessages.join('\n---\n');

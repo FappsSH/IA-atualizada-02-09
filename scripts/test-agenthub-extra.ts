@@ -181,7 +181,7 @@ try {
   const officialImageHash = createHash('md5').update(readFileSync(new URL('../supabase/functions/whatsapp-sender/assets/informacao-instituicao.jpeg', import.meta.url))).digest('hex');
   const INSTITUTION_REPEAT = /(premiad|\bmec\b|conceito institucional|nota maxima|diploma|reconhecid|60 anos|anos de (historia|tradicao)|tradicao de mais|blackboard|tutor|abrir muitas portas|se destacar)/;
   const ASK_NAME = /como posso te chamar|qual (e )?o seu nome|qual seu nome|me diz seu nome|me fala seu nome/;
-  const PRICE_LEAK = /r\$\s*\d|\d+\s*%|\bmensalidade de\b|\breais\b/;
+  const PRICE_LEAK = /r\$\s*\d|\d+\s*%(?!\s*ead)|\bmensalidade de\b|\breais\b/;
 
   function e3Checks(sc: string, t: any, o: { course: RegExp; internship: boolean; motivation: RegExp; withName?: boolean }) {
     check(sc, 'E3', 'legenda curta logo abaixo da imagem', /essa imagem resume/i.test(t.texts[0] || ''), t.texts[0]);
@@ -212,7 +212,7 @@ try {
   check(X1, 'curso', 'sem nome confiável: pergunta o nome antes de seguir', x1nameAsk.texts.length === 1 && x1nameAsk.texts[0] ?.replace(/\s+/g, ' ') === 'Claro! Antes de te passar certinho, como posso te chamar?', x1nameAsk.texts);
   let x1b = await turn(X1, x1, 'Fernanda');
   x1b = await chooseLineIfAsked(X1, x1, x1b, 'Licenciatura');
-  check(X1, 'nome', 'usa o nome na pergunta da cidade', /fernanda, me confirma de qual cidade/.test(norm(x1b.joined)), x1b.texts);
+  check(X1, 'nome', '"Prazer, Fernanda!!" e a cidade, com o nome uma vez só', /^prazer, fernanda!!/.test(norm(x1b.texts[0] || '')) && /cidade/.test(norm(x1b.joined)) && (norm(x1b.joined).match(/fernanda/g) || []).length === 1, x1b.texts);
   check(X1, 'curso', 'pede a cidade, sem falar de modalidade/duração/preço', /cidade/.test(norm(x1b.joined)) && !/semestre|modalidade|ead|semipresencial|valor|bolsa/.test(norm(x1b.joined)), x1b.joined);
   const x1c = await turn(X1, x1, 'Ji-Paraná');
   check(X1, 'cidade', 'pergunta de motivação', /trabalha nessa area|sonho ou objetivo/.test(norm(x1c.joined)), x1c.joined);
