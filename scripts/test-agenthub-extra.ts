@@ -351,7 +351,8 @@ try {
   const X8 = 'X8 lista de Saúde -> pede curso de outra área (Administração)';
   const x8 = await newLead('+5500092000008', { name: 'Bruno Lima' });
   await turn(X8, x8, 'Oi');
-  await turn(X8, x8, 'Quero fazer Enfermagem');
+  const x8enf = await turn(X8, x8, 'Quero fazer Enfermagem');
+  check(X8, 'Enfermagem', 'no máximo 5 cursos alternativos', (x8enf.joined.match(/^\s*([-•·]\s+|\*(?!saude|saúde)[^*\n]+\*\s*$)/gim) || []).length <= 5, x8enf.texts);
   const x8b = await turn(X8, x8, 'E Administração, vocês têm?');
   check(X8, 'outra área', 'aceita Administração (catálogo) e segue para a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x8b.joined)) && /cidade/.test(norm(x8b.joined)), x8b.texts);
   const x8c = await turn(X8, x8, 'E Medicina?');

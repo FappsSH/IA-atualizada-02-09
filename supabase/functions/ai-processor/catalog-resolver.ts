@@ -284,6 +284,8 @@ function detectSpecificCourse(message: string, history: Array<{ role?: string; c
   if (isMediaPlaceholderMessage(raw)) return null;
 
   const patterns = [
+    // "E Medicina?", "Tem Psicologia?", "E o curso de Direito, vocês têm?"
+    /^(?:e|tem|voc[eê]s t[eê]m|vcs tem|e o curso de|e a gradua[cç][aã]o (?:de|em)|e de|e o de|e a de)\s+([\p{L}\s-]{3,}?)(?:,?\s*(?:voc[eê]s|vcs)\s+t[eê]m)?\s*\??$/iu,
     /\bquanto\s+(?:t[aá]|est[aá]|[eé]|custa|fica|sai|seria|cobra(?:m)?)\s+(?:o\s+|a\s+)?(?:curso\s+de\s+|gradua[cç][aã]o\s+(?:em|de)\s+|faculdade\s+de\s+)?([\p{L}\s-]{2,}?)\s*\??$/iu,
     /\b(?:valor|valores|pre[cç]o|mensalidade|quanto custa|quanto fica)\s+(?:d[eoa]s?|para|pra)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{2,}?)\s*\??$/iu,
     /\b(?:saber|informa[cç](?:[oõ]es|[aã]o))\s+(?:mais\s+)?(?:sobre|de|do|da)\s+(?:o\s+curso\s+de\s+|a\s+gradua[cç][aã]o\s+(?:em|de)\s+)?([\p{L}\p{N}\s-]{3,})$/iu,

@@ -4926,6 +4926,20 @@ serve(async (req) => {
                 }
             }
 
+            // E1 (spec): lista de cursos alternativos tem no máximo 5 itens.
+            if (finalSubagent === 'E1') {
+                const capList = (value: string) => {
+                    let count = 0;
+                    return value.split('\n').filter((line) => {
+                        if (!/^\s*([-•·]\s+|\*[^*\n]+\*\s*$)/.test(line) || /^\s*\*(saúde|gestão|educação|tecnologia|engenharia|comunicação|direito|ciências)/i.test(line) && !/^\s*[-•·]/.test(line)) return true;
+                        count += 1;
+                        return count <= 5;
+                    }).join('\n').replace(/\n{3,}/g, '\n\n');
+                };
+                if (Array.isArray(out.atomicMessages)) out.atomicMessages = out.atomicMessages.map((part: unknown) => capList(String(part || '')));
+                out.text = capList(String(out.text || ''));
+            }
+
             // E1 (spec): a pergunta da cidade sai sempre na forma canônica.
             if (finalSubagent === 'E1') {
                 const cityFirstName = nameJustResolvedFirstName ? '' : getTrustedOpeningFirstName(leadSnapshot);
