@@ -252,7 +252,20 @@ const COURSE_ABBREVIATIONS: Record<string, string> = {
   pedago: 'Pedagogia',
 };
 
+// Palavras de pergunta/preço que vêm junto do nome do curso ("Nutrição tá quanto", "qual o valor de enfermagem").
+const QUERY_FILLER = new Set(['qual', 'quais', 'o', 'a', 'os', 'as', 'e', 'eh', 'ta', 'esta', 'quanto', 'quanta', 'custa', 'custo', 'fica', 'sai',
+  'valor', 'valores', 'preco', 'precos', 'mensalidade', 'mensalidades', 'de', 'do', 'da', 'dos', 'das', 'pra', 'para', 'curso', 'faculdade',
+  'graduacao', 'hoje', 'agora', 'mesmo', 'ai', 'ae', 'ein', 'hein', 'por', 'favor', 'me', 'fala', 'passa', 'sobre', 'quero', 'saber']);
+
+function stripQueryFiller(query: string): string {
+  const words = normalize(String(query || '')).replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter(Boolean);
+  const kept = words.filter((word) => !QUERY_FILLER.has(word));
+  return kept.length > 0 && kept.length < words.length ? kept.join(' ') : '';
+}
+
 export function expandCourseAbbreviation(query: string): string {
+  const stripped = stripQueryFiller(query);
+  if (stripped) query = stripped;
   const key = normalize(String(query || '')).replace(/\s+/g, ' ').trim();
   if (COURSE_ABBREVIATIONS[key]) return COURSE_ABBREVIATIONS[key];
   // Dentro de uma frase ("valor adm", "adm ead"): troca só as abreviações inequívocas.

@@ -333,6 +333,19 @@ try {
 
   check(X5, 'cidade', 'aceita a cidade e faz a pergunta de motivação uma vez', /trabalha nessa area|sonho ou objetivo/.test(norm(x5c.joined)) && x5c.texts.length === 1 && x5c.after.etapa_atual === 'E1', x5c.texts);
 
+  // ── X7: conversa real de 26/11 (Enfermagem fora do catálogo, "são só essas?", "Nutrição tá quanto")
+  const X7 = 'X7 Enfermagem indisponível -> "Nutrição tá quanto" (conversa real de 26/11)';
+  const x7 = await newLead('+5500092000007');
+  await turn(X7, x7, 'Oi');
+  const x7a = await turn(X7, x7, 'qual o valor de enfermagem');
+  check(X7, 'curso', 'pergunta o nome', /como posso te chamar/.test(norm(x7a.joined)), x7a.texts);
+  const x7b = await turn(X7, x7, 'Jacó');
+  check(X7, 'nome', 'Enfermagem fora do catálogo: explica e oferece até 5 alternativas reais', /enfermagem/.test(norm(x7b.joined)) && (x7b.joined.match(/^\s*[-•·]/gm) || []).length <= 5 && !/infelizmente|nao localizei|consultei/.test(norm(x7b.joined)), x7b.texts);
+  const x7c = await turn(X7, x7, 'são só essas ?');
+  check(X7, 'são só essas', 'responde com cursos reais', x7c.joined.length > 0 && !/nao temos outras|nao ha outras/.test(norm(x7c.joined)), x7c.texts);
+  const x7d = await turn(X7, x7, 'Nutrição tá quanto');
+  check(X7, 'Nutrição tá quanto', 'reconhece Nutrição (está no catálogo), diz que passa os valores e pede a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x7d.joined)) && /nutricao/.test(norm(x7d.joined) + norm(String(x7d.after?.curso_interesse || ''))) && /cidade/.test(norm(x7d.joined)), [x7d.after?.curso_interesse, x7d.texts]);
+
   // ── G: portão do webhook (quem NÃO é lead não é atendido) — nada é enviado
   const G = 'portão do webhook';
   const hookHeaders: Record<string, string> = { 'Content-Type': 'application/json' };

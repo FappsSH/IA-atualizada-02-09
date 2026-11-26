@@ -12,4 +12,11 @@ describe('curso dentro de pergunta de valor (conversa real 25/11)', () => {
     const r: any = detectCatalogIntentWithHistory('Quanto custa a mensalidade?', []);
     expect(r.mode === 'specific' && /mensalidade/.test(String(r.query))).toBe(false);
   });
+  it('nome do curso antes da pergunta de preço', async () => {
+    const { expandCourseAbbreviation } = await import('../../../supabase/functions/ai-processor/catalog-resolver.ts');
+    expect(expandCourseAbbreviation('Nutrição tá quanto')).toBe('nutricao');
+    expect(expandCourseAbbreviation('qual o valor de enfermagem')).toBe('enfermagem');
+    expect(expandCourseAbbreviation('Administração')).toBe('Administração');
+    expect(expandCourseAbbreviation('adm')).toBe('Administração');
+  });
 });
