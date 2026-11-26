@@ -2278,6 +2278,16 @@ serve(async (req) => {
                 if (leadSnapshot && introUpdate) Object.assign(leadSnapshot, introUpdate);
             }
         }
+        // "digitando..." no WhatsApp enquanto a resposta é montada (não trava o processamento).
+        if (leadSnapshot && leadSnapshot.bloqueado !== true && (payload as any).trigger !== 'stage_handoff') {
+            const typing = fetch(`${env.SUPABASE_URL}/functions/v1/whatsapp-sender`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+                body: JSON.stringify({ presence_only: true, presence_ms: 20000, lead_id: payload.lead_id, tenant_id: payload.tenant_id, telefone: payload.telefone }),
+            }).catch(() => null);
+            const runtime = (globalThis as any).EdgeRuntime;
+            if (runtime?.waitUntil) runtime.waitUntil(typing);
+        }
         const salesContextBeforeInbound = { ...(leadSnapshot?.sales_context || {}) };
 
         const pendingCheckpoint = await getPendingAdminCheckpoint(supabase, payload.lead_id).catch(() => null);

@@ -48,7 +48,8 @@ async function evolutionSendTextOnce(
       number,
       text,
       options: {
-        delay: 1200,
+        // "digitando..." proporcional ao tamanho da mensagem (1,2s a 4s), como uma pessoa.
+        delay: Math.max(1200, Math.min(4000, 600 + String(text || '').length * 18)),
         presence: 'composing',
       },
     }),
@@ -146,7 +147,8 @@ serve(async (req) => {
     const skipTakeover = body?.skip_takeover === true;
     let { telefone } = body ?? {};
 
-    if (!text && send_institution_image !== true) {
+    const presenceOnly = body?.presence_only === true;
+    if (!text && send_institution_image !== true && !presenceOnly) {
       return new Response(
         JSON.stringify({ ok: false, error: 'campo "text" obrigatorio' }),
         { status: 400 },
@@ -211,6 +213,17 @@ serve(async (req) => {
 
     if (!evolutionBaseUrl || !evolutionApiKey) {
       throw new Error('EVOLUTION_API_URL ou EVOLUTION_API_KEY nao configurados no tenant');
+    }
+
+    // "digitando..." no WhatsApp enquanto a AgentHub monta a resposta.
+    if (presenceOnly) {
+      const ms = Math.max(1000, Math.min(Number(body?.presence_ms) || 15000, 25000));
+      const presenceRes = await fetch(`${evolutionBaseUrl}/chat/sendPresence/${evolutionInstance}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: evolutionApiKey },
+        body: JSON.stringify({ number: String(telefone || '').replace(/^\+/, '').replace(/@.*/, ''), presence: 'composing', delay: ms }),
+      }).catch((err) => ({ ok: false, status: 0, text: async () => String(err) } as any));
+      return new Response(JSON.stringify({ ok: !!presenceRes.ok, presence: 'composing' }), { headers: { 'Content-Type': 'application/json' } });
     }
 
     console.log(
