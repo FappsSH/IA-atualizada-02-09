@@ -4540,7 +4540,9 @@ serve(async (req) => {
                 for (const item of collectedTexts) {
                     if (item.stage !== 'E1') continue;
                     const normalizedItem = normalizeText(String(item.text || ''));
-                    if (courseConfirmed && /(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos|outras opcoes|alternativas)/.test(normalizedItem)) {
+                    const confirmedCourseKey = normalizeText(String(salesCtx.course_display_name || leadSnapshot?.curso_interesse || '')).replace(/\(.*?\)/g, ' ').replace(/\b(bacharelado|licenciatura|tecnologo)\b/g, ' ').replace(/\s+/g, ' ').trim();
+                    // Só corrige quando a IA diz que o curso JÁ CONFIRMADO não existe; outro curso pedido agora (ex.: Medicina) pode ser recusado.
+                    if (courseConfirmed && confirmedCourseKey && normalizedItem.includes(confirmedCourseKey) && /(nao temos|nao esta disponivel|indisponivel|nao esta entre|nao oferecemos|outras opcoes|alternativas)/.test(normalizedItem)) {
                         if (e1CompletedThisTurn) {
                             item.text = buildCanonicalMotivationReaction(motivationText);
                         } else {
