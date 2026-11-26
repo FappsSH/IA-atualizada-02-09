@@ -346,6 +346,16 @@ try {
   const x7d = await turn(X7, x7, 'Nutrição tá quanto');
   check(X7, 'Nutrição tá quanto', 'reconhece Nutrição (está no catálogo), diz que passa os valores e pede a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x7d.joined)) && /nutricao/.test(norm(x7d.joined) + norm(String(x7d.after?.curso_interesse || ''))) && /cidade/.test(norm(x7d.joined)), [x7d.after?.curso_interesse, x7d.texts]);
 
+  // ── X8: depois da lista de Saúde, pede um curso de OUTRA área
+  const X8 = 'X8 lista de Saúde -> pede curso de outra área (Administração)';
+  const x8 = await newLead('+5500092000008', { name: 'Bruno Lima' });
+  await turn(X8, x8, 'Oi');
+  await turn(X8, x8, 'Quero fazer Enfermagem');
+  const x8b = await turn(X8, x8, 'E Administração, vocês têm?');
+  check(X8, 'outra área', 'aceita Administração (catálogo) e segue para a cidade', !/nao esta entre|nao esta disponivel|nao oferecemos/.test(norm(x8b.joined)) && /cidade/.test(norm(x8b.joined)), x8b.texts);
+  const x8c = await turn(X8, x8, 'E Medicina?');
+  check(X8, 'curso inexistente', 'Medicina não existe: explica sem inventar e sem "infelizmente"', /medicina/.test(norm(x8c.joined)) && !/infelizmente|nao localizei|consultei/.test(norm(x8c.joined)), x8c.texts);
+
   // ── G: portão do webhook (quem NÃO é lead não é atendido) — nada é enviado
   const G = 'portão do webhook';
   const hookHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
